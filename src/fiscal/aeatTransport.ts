@@ -21,6 +21,7 @@
  * 5. Seguridad: Ninguna clave privada o certificado se procesa en el cliente/frontend.
  */
 
+import https from 'node:https';
 import {
   FiscalRecord,
   FiscalSubmission,
@@ -344,10 +345,16 @@ export async function executeAeatSubmission(params: {
     throw new Error('executeAeatSubmission: No se permite enviar un registro sin XML oficial sellado.');
   }
 
+  // Comprobación previa de modo de transporte y credenciales mTLS (prohibido fallback silencioso)
+  const configuredMode = options?.transportMode || process.env.AEAT_TRANSPORT_MODE;
+  if (configuredMode === 'real' && !AeatCertificateProvider.hasCertificate()) {
+    throw new Error('executeAeatSubmission: Modo real de transporte AEAT requerido (AEAT_TRANSPORT_MODE=real), pero no se han configurado credenciales de certificado mTLS válidas en el servidor. Fallback a mock estrictamente prohibido.');
+  }
+
   const actor: FiscalActor = options?.actor || { tipo: 'SYSTEM', nombre: 'AeatTransportService' };
   const startTime = Date.now();
 
-  const shouldManageLock = options?.acquireLock === true;
+  const shouldManageLock = options?.acquireLock !== false;
   if (shouldManageLock) {
     const lockAcquired = AeatFlowControlManager.acquireSendLock(fiscalRecord.obligadoTributarioId);
     if (!lockAcquired) {
@@ -374,10 +381,22 @@ export async function executeAeatSubmission(params: {
 
     const soapPayload = wrapInAeatSoapEnvelope(xmlParaEnvio);
 
-    // Determinar modo de transporte (Mock vs Real)
-    const isMock = options?.transportMode === 'mock' ||
-      process.env.AEAT_TRANSPORT_MODE === 'mock' ||
-      (!AeatCertificateProvider.hasCertificate() && options?.transportMode !== 'real');
+    // Determinar modo de transporte (Mock vs Real) con prohibición estricta de fallback silencioso
+    let isMock = false;
+    const configuredMode = options?.transportMode || process.env.AEAT_TRANSPORT_MODE;
+
+    if (configuredMode === 'real') {
+      // Modo real requerido expresamente: PROHIBIDO cualquier fallback silencioso a mock
+      if (!AeatCertificateProvider.hasCertificate()) {
+        throw new Error('executeAeatSubmission: Modo real de transporte AEAT requerido (AEAT_TRANSPORT_MODE=real), pero no se han configurado credenciales de certificado mTLS válidas en el servidor. Fallback a mock estrictamente prohibido.');
+      }
+      isMock = false;
+    } else if (configuredMode === 'mock') {
+      isMock = true;
+    } else {
+      // Sin modo explícito: si hay credenciales configuradas usar real; de lo contrario mock
+      isMock = !AeatCertificateProvider.hasCertificate();
+    }
 
     try {
       let httpStatus = 200;
@@ -415,31 +434,52 @@ export async function executeAeatSubmission(params: {
           httpStatus = res.status;
           responseText = await res.text();
         } else {
-          // En entorno Node.js, invocar con agente mTLS o fetch con credenciales
-          const fetchFn = globalThis.fetch;
-          if (!fetchFn) {
-            throw new Error('executeAeatSubmission: Entorno sin soporte de fetch nativo.');
+          // En entorno Node.js, utilizar agente HTTPS mTLS nativo con las credenciales
+          if (!certCreds) {
+            throw new Error('executeAeatSubmission: No se dispone de credenciales de certificado mTLS para la conexión real con AEAT.');
           }
 
-          const controller = new AbortController();
-          const timeout = setTimeout(() => controller.abort(), options?.timeoutMs || 30000);
+          const httpsAgent = certCreds.pfx
+            ? new https.Agent({ pfx: certCreds.pfx, passphrase: certCreds.passphrase, rejectUnauthorized: true })
+            : new https.Agent({ cert: certCreds.cert, key: certCreds.key, rejectUnauthorized: true });
 
-          try {
-            const res = await fetchFn(endpoint, {
+          const timeoutMs = options?.timeoutMs || 30000;
+          const urlObj = new URL(endpoint);
+
+          const response = await new Promise<{ status: number; text: string }>((resolve, reject) => {
+            const req = https.request(urlObj, {
               method: 'POST',
+              agent: httpsAgent,
               headers: {
                 'Content-Type': 'text/xml; charset=utf-8',
                 'SOAPAction': '""',
+                'Content-Length': Buffer.byteLength(soapPayload, 'utf-8'),
                 ...(options?.httpHeaders || {})
               },
-              body: soapPayload,
-              signal: controller.signal
+              timeout: timeoutMs
+            }, (res) => {
+              let body = '';
+              res.setEncoding('utf-8');
+              res.on('data', chunk => { body += chunk; });
+              res.on('end', () => {
+                resolve({ status: res.statusCode || 200, text: body });
+              });
             });
-            httpStatus = res.status;
-            responseText = await res.text();
-          } finally {
-            clearTimeout(timeout);
-          }
+
+            req.on('timeout', () => {
+              req.destroy(new Error(`Timeout de red superado (${timeoutMs}ms)`));
+            });
+
+            req.on('error', (err) => {
+              reject(err);
+            });
+
+            req.write(soapPayload, 'utf-8');
+            req.end();
+          });
+
+          httpStatus = response.status;
+          responseText = response.text;
         }
       }
 
@@ -779,9 +819,8 @@ export function scheduleSubmissionRetry(
   // Coordinación técnica:
   // Si la AEAT tiene una ventana de espera activa para el obligado tributario,
   // el reintento técnico no puede lanzarse antes de que expire dicha ventana oficial.
-  const effectiveDelay = typeof delaySeconds === 'number'
-    ? delaySeconds
-    : Math.max(internalDelay, remainingAeatWaitSeconds);
+  const requestedOrInternalDelay = typeof delaySeconds === 'number' ? delaySeconds : internalDelay;
+  const effectiveDelay = Math.max(requestedOrInternalDelay, remainingAeatWaitSeconds);
 
   const proximoReintento = new Date(now + effectiveDelay * 1000).toISOString();
   return transitionSubmissionStatus(submission, 'RETRY_PENDING', {

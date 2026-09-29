@@ -15,6 +15,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
+import { validateAeatVerifactuXml } from './aeatVerifactuXmlBuilder';
 
 export interface XmlValidationReport {
   valid: boolean;
@@ -24,6 +25,7 @@ export interface XmlValidationReport {
 /**
  * Validador formal estricto contra los esquemas XSD oficiales de la AEAT
  * (SuministroLR.xsd y sus importaciones asociadas) utilizando el motor normativo xmllint (libxml2).
+ * Si xmllint no está disponible en el entorno del sistema, delega en validateAeatVerifactuXml.
  */
 export function validateXmlAgainstOfficialXsd(
   xmlString: string,
@@ -47,6 +49,10 @@ export function validateXmlAgainstOfficialXsd(
       });
       return { valid: true, errors: [] };
     } catch (err: any) {
+      if (err.code === 'ENOENT') {
+        // Si xmllint no está instalado en el sistema operativo, validar con el validador normativo interno
+        return validateAeatVerifactuXml(xmlString);
+      }
       const output = (err.stderr || err.stdout || err.message || '').toString();
       const rawLines = output
         .split('\n')

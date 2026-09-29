@@ -7,6 +7,10 @@ import { GoogleGenAI, Type } from "@google/genai";
 import dotenv from "dotenv";
 import { executeAeatSubmission } from "./src/fiscal/aeatTransport";
 import { AeatCertificateProvider } from "./src/fiscal/aeatCertificateProvider";
+import { emitFiscalInvoice, emitFiscalAnulacion } from "./src/fiscal/emissionService";
+import { BackendFiscalCustody } from "./src/fiscal/backendCustodyRepository";
+import { verifyFiscalRecordHash } from "./src/fiscal/hashService";
+import { createFiscalSubmission } from "./src/fiscal/submissionService";
 
 dotenv.config();
 
@@ -820,77 +824,94 @@ INSTRUCCIONES CLAVE:
   });
 });
 
-// --- ENDPOINT VERI*FACTU: REGISTRO CRIPTOGRÁFICO DE ALTA DE FACTURACIÓN (LEY ANTIFRAUDE) ---
-app.post("/api/verifactu/procesar-factura", async (req, res) => {
+// --- ENDPOINTS FASE 3.1.3: AUTORIDAD FISCAL, CUSTODIA Y TRANSPORTE AEAT ---
+
+// 1. Emisión de Factura Fiscal con autoridad exclusiva en backend
+app.post("/api/fiscal/emit-invoice", async (req, res) => {
   try {
-    const { factura, config, hashAnterior } = req.body;
-    if (!factura || !factura.numeroFactura) {
-      return res.status(400).json({ error: "Faltan datos obligatorios de la factura." });
+    const { invoiceDraft, fiscalConfig } = req.body;
+    if (!invoiceDraft || !fiscalConfig) {
+      return res.status(400).json({ error: "Faltan datos obligatorios: invoiceDraft y fiscalConfig son requeridos." });
     }
 
-    const nifEmisor = (config?.cifEmpresa || "B12345678").trim().toUpperCase();
-    const numSerie = (factura.numeroFactura || "").trim();
-    const fechaExpedicion = (factura.fecha || new Date().toISOString().split("T")[0]).trim();
-    const tipoFactura = factura.tipoFactura || (factura.esRectificativa ? "R1" : "F1");
-    const totalFactura = Number(factura.totales?.totalDocumento || 0).toFixed(2);
-    const hashPrevio = (hashAnterior || "").trim().toUpperCase();
-    const fechaHoraSellado = new Date().toISOString();
-
-    // 1. Calcular Hash SHA-256 según especificaciones de la Orden HAC/1177/2024
-    const cadenaAEAT = [
-      nifEmisor,
-      numSerie,
-      fechaExpedicion,
-      tipoFactura,
-      totalFactura,
-      hashPrevio,
-      fechaHoraSellado
-    ].join("&");
-
-    const hashActual = crypto.createHash("sha256").update(cadenaAEAT, "utf8").digest("hex").toUpperCase();
-
-    // 2. Construir URL oficial de la Sede Electrónica de la AEAT para validación
-    let fechaUrl = fechaExpedicion;
-    const pFecha = fechaExpedicion.split("-");
-    if (pFecha.length === 3) {
-      fechaUrl = `${pFecha[2]}-${pFecha[1]}-${pFecha[0]}`;
+    const nif = (fiscalConfig.nifEmisor || fiscalConfig.obligadoTributarioId || "").trim().toUpperCase();
+    if (!nif || nif === 'ES_UNKNOWN' || nif === 'B12345678') {
+      return res.status(400).json({ error: "NIF de emisor obligatorio y válido requerido (prohibido vacío, B12345678 o ES_UNKNOWN)." });
     }
-    const urlVeriFactu = `https://sede.agenciatributaria.gob.es/Sede/verifactu.html?nif=${encodeURIComponent(nifEmisor)}&numserie=${encodeURIComponent(numSerie)}&fecha=${encodeURIComponent(fechaUrl)}&total=${encodeURIComponent(totalFactura)}`;
 
-    // 3. Generar Código QR oficial en formato DataURL
-    let qrDataUri = "";
-    try {
-      qrDataUri = await QRCode.toDataURL(urlVeriFactu, {
-        width: 300,
-        margin: 2,
-        errorCorrectionLevel: "M",
-        color: { dark: "#09090b", light: "#ffffff" }
-      });
-    } catch (qrErr) {
-      console.error("Error generando QR Veri*Factu en backend:", qrErr);
+    if (!invoiceDraft.numeroFactura || !invoiceDraft.fecha) {
+      return res.status(400).json({ error: "numeroFactura y fecha de expedición son obligatorios." });
     }
+
+    const result = await emitFiscalInvoice({
+      invoiceDraft,
+      fiscalConfig,
+      persistRecordFn: async (record) => {
+        await BackendFiscalCustody.saveFiscalRecord(record);
+      }
+    });
 
     return res.json({
       success: true,
-      hashActual,
-      hashAnterior: hashPrevio,
-      fechaHoraSellado,
-      urlVeriFactu,
-      qrDataUri,
-      tipoFactura,
-      software: {
-        nombre: "Gestión Avícola",
-        version: "1.0.0",
-        fabricante: "Gestión Avícola AgroTech Software S.L."
-      }
+      invoice: result.invoice,
+      fiscalRecord: result.fiscalRecord,
+      fiscalRecordRef: result.fiscalRecordRef
     });
   } catch (err: any) {
-    console.error("Error en procesamiento Veri*Factu:", err);
-    return res.status(500).json({ error: err.message || "Error interno al procesar el registro Veri*Factu" });
+    console.error("Error en emisión fiscal backend:", err);
+    return res.status(500).json({ error: err.message || "Error al emitir factura fiscal en backend" });
   }
 });
 
-// --- ENDPOINTS FASE 3.1: TRANSPORTE Y REMISIÓN AEAT VERI*FACTU ---
+// 2. Emisión de Anulación Fiscal con autoridad exclusiva en backend
+app.post("/api/fiscal/emit-anulacion", async (req, res) => {
+  try {
+    const { facturaAnulada, fiscalConfig, obligadoTributarioId } = req.body;
+    if (!facturaAnulada || !fiscalConfig) {
+      return res.status(400).json({ error: "Faltan datos obligatorios: facturaAnulada y fiscalConfig son requeridos." });
+    }
+
+    const obligadoId = (obligadoTributarioId || fiscalConfig.obligadoTributarioId || fiscalConfig.nifEmisor || "").trim().toUpperCase();
+    if (!obligadoId || obligadoId === 'ES_UNKNOWN') {
+      return res.status(400).json({ error: "obligadoTributarioId obligatorio y no puede ser ES_UNKNOWN." });
+    }
+
+    const result = await emitFiscalAnulacion({
+      facturaAnulada,
+      fiscalConfig,
+      obligadoTributarioId: obligadoId,
+      persistRecordFn: async (record) => {
+        await BackendFiscalCustody.saveFiscalRecord(record);
+      }
+    });
+
+    return res.json({
+      success: true,
+      fiscalRecord: result.fiscalRecord,
+      fiscalRecordRef: result.fiscalRecordRef
+    });
+  } catch (err: any) {
+    console.error("Error en anulación fiscal backend:", err);
+    return res.status(500).json({ error: err.message || "Error al anular factura fiscal en backend" });
+  }
+});
+
+// 3. Consulta de registros en custodia de backend
+app.get("/api/fiscal/records", (req, res) => {
+  const obligado = typeof req.query.obligado === 'string' ? req.query.obligado : undefined;
+  const records = BackendFiscalCustody.getAllFiscalRecords(obligado);
+  res.json({ records, count: records.length });
+});
+
+app.get("/api/fiscal/records/:id", (req, res) => {
+  const record = BackendFiscalCustody.getFiscalRecordById(req.params.id);
+  if (!record) {
+    return res.status(404).json({ error: `FiscalRecord '${req.params.id}' no encontrado en custodia de backend.` });
+  }
+  res.json(record);
+});
+
+// 4. Estado de certificado (exclusivamente información pública sin secretos)
 app.get("/api/fiscal/cert-status", (_req, res) => {
   res.json({
     available: AeatCertificateProvider.hasCertificate(),
@@ -899,27 +920,128 @@ app.get("/api/fiscal/cert-status", (_req, res) => {
   });
 });
 
+// 5. Remisión a AEAT con verificación criptográfica estricta y cerrojo de concurrencia
 app.post("/api/fiscal/submit", async (req, res) => {
   try {
-    const { submission, fiscalRecord, config, options } = req.body;
-    if (!submission || !fiscalRecord || !config) {
-      return res.status(400).json({ error: "Faltan datos obligatorios: submission, fiscalRecord y config son requeridos." });
+    const { submission, fiscalRecord, config, options, fiscalRecordId } = req.body;
+
+    let recordToSubmit = fiscalRecord;
+    if (!recordToSubmit && fiscalRecordId) {
+      recordToSubmit = BackendFiscalCustody.getFiscalRecordById(fiscalRecordId);
+    }
+
+    if (!recordToSubmit) {
+      return res.status(400).json({ error: "Faltan datos obligatorios: fiscalRecord o fiscalRecordId son requeridos." });
+    }
+
+    // Verificación criptográfica obligatoria en backend de la huella SHA-256
+    const verification = await verifyFiscalRecordHash(recordToSubmit);
+    if (!verification.valid) {
+      return res.status(400).json({
+        error: `Fallo de integridad criptográfica en FiscalRecord: ${verification.reason}. Remisión rechazada por seguridad.`
+      });
+    }
+
+    const fiscalConfig = config || {
+      entornoAeat: 'test',
+      obligadoTributarioId: recordToSubmit.obligadoTributarioId,
+      nifEmisor: recordToSubmit.emisor.nif
+    };
+
+    let subToUse = submission;
+    if (!subToUse) {
+      subToUse = createFiscalSubmission(recordToSubmit, fiscalConfig);
     }
 
     const result = await executeAeatSubmission({
-      submission,
-      fiscalRecord,
-      config,
+      submission: subToUse,
+      fiscalRecord: recordToSubmit,
+      config: fiscalConfig,
       options
     });
 
+    // Guardar submission y event en custodia de backend
+    BackendFiscalCustody.saveFiscalSubmission(result.submission);
+    BackendFiscalCustody.saveFiscalEvent(result.fiscalEvent);
+
     res.json(result);
   } catch (err: any) {
-    console.error("Error en remisión AEAT:", err.message);
+    console.error("Error en remisión AEAT backend:", err.message);
     res.status(500).json({
-      error: "Error interno en el transporte AEAT",
+      error: "Error en el transporte AEAT",
       message: err.message
     });
+  }
+});
+
+// 6. Endpoint de compatibilidad procesar-factura protegido contra inyección y valores ficticios
+app.post("/api/verifactu/procesar-factura", async (req, res) => {
+  try {
+    const { factura, config } = req.body;
+    if (!factura || !factura.numeroFactura) {
+      return res.status(400).json({ error: "Faltan datos obligatorios de la factura." });
+    }
+
+    const nifEmisor = (config?.cifEmpresa || config?.nifEmisor || "").trim().toUpperCase();
+    if (!nifEmisor || nifEmisor === 'ES_UNKNOWN' || nifEmisor === 'B12345678') {
+      return res.status(400).json({ error: "NIF de emisor obligatorio y válido requerido (prohibido B12345678 o ES_UNKNOWN)." });
+    }
+
+    const result = await emitFiscalInvoice({
+      invoiceDraft: factura,
+      fiscalConfig: {
+        obligadoTributarioId: nifEmisor,
+        nifEmisor,
+        nombreRazonEmisor: config?.nombreEmpresa || 'Gestión Avícola',
+        modalidad: 'VERI_FACTU',
+        versionEspecificacion: '1.0',
+        sistemaInformatico: {
+          nombreRazon: 'Gestión Avícola AgroTech Software S.L.',
+          nif: 'B99000001',
+          nombreSistemaInformatico: 'Gestión Avícola',
+          idSistemaInformatico: '01',
+          version: '1.0.0',
+          numeroInstalacion: '01',
+          tipoUsoPosibleSoloVerifactu: 'S',
+          tipoUsoPosibleMultiOT: 'N',
+          indicadorMultiplesOT: 'N'
+        },
+        entornoAeat: 'pruebas',
+        remisionAutomatica: true,
+        reintentosMaximos: 3,
+        minutosEntreReintentos: 1,
+        transporte: {
+          endpointUrl: '',
+          timeoutMs: 30000,
+          certificadoConfigurado: false
+        },
+        certificadoConfigurado: false,
+        fechaActivacion: new Date().toISOString()
+      },
+      persistRecordFn: async (record) => {
+        await BackendFiscalCustody.saveFiscalRecord(record);
+      }
+    });
+
+    return res.json({
+      success: true,
+      hashActual: result.fiscalRecord.huella.hash,
+      hashAnterior: result.fiscalRecord.encadenamiento.registroAnterior?.huella || '',
+      fechaHoraSellado: result.fiscalRecord.fechaHoraHusoGenRegistro,
+      urlVeriFactu: result.fiscalRecord.qr.url,
+      qrDataUri: result.fiscalRecord.qr.qrDataUri,
+      tipoFactura: result.fiscalRecord.factura.tipoFactura,
+      software: {
+        nombre: "Gestión Avícola",
+        version: "1.0.0",
+        fabricante: "Gestión Avícola AgroTech Software S.L."
+      },
+      fiscalRecord: result.fiscalRecord,
+      fiscalRecordRef: result.fiscalRecordRef
+    });
+  } catch (err: any) {
+    console.error("Error en procesamiento Veri*Factu backend:", err);
+    return res.status(500).json({ error: err.message || "Error interno al procesar el registro Veri*Factu" });
   }
 });
 

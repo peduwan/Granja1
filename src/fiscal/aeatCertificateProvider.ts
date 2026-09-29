@@ -27,22 +27,30 @@ export interface AeatCertificateInfo {
 export class AeatCertificateProvider {
   private static cachedCredentials: AeatCertificateCredentials | null = null;
 
+  private static isPlaceholder(val?: string | null): boolean {
+    if (!val) return true;
+    const t = val.trim().toLowerCase();
+    return t === '' || t === 'vacio' || t === 'vacío' || t === 'placeholder' || t === 'none' || t === 'undefined';
+  }
+
   /**
    * Comprueba si el servidor dispone de credenciales de certificado configuradas.
    */
   public static hasCertificate(): boolean {
-    return Boolean(
-      (process.env.AEAT_CERT_PFX_BASE64 && process.env.AEAT_CERT_PASSWORD) ||
-      (process.env.AEAT_CERT_PEM && process.env.AEAT_KEY_PEM)
-    );
+    if (this.cachedCredentials !== null) {
+      return true;
+    }
+    const hasPfx = !this.isPlaceholder(process.env.AEAT_CERT_PFX_BASE64) && !this.isPlaceholder(process.env.AEAT_CERT_PASSWORD);
+    const hasPem = !this.isPlaceholder(process.env.AEAT_CERT_PEM) && !this.isPlaceholder(process.env.AEAT_KEY_PEM);
+    return hasPfx || hasPem;
   }
 
   /**
    * Obtiene la información pública del estado del certificado sin revelar secretos.
    */
   public static getPublicInfo(): AeatCertificateInfo {
-    const hasPfx = Boolean(process.env.AEAT_CERT_PFX_BASE64);
-    const hasPem = Boolean(process.env.AEAT_CERT_PEM);
+    const hasPfx = !this.isPlaceholder(process.env.AEAT_CERT_PFX_BASE64);
+    const hasPem = !this.isPlaceholder(process.env.AEAT_CERT_PEM);
 
     if (hasPfx) {
       return { available: true, type: 'PKCS12' };
@@ -69,8 +77,8 @@ export class AeatCertificateProvider {
     const pfxBase64 = process.env.AEAT_CERT_PFX_BASE64;
     const passphrase = process.env.AEAT_CERT_PASSWORD;
 
-    if (pfxBase64) {
-      const pfx = Buffer.from(pfxBase64, 'base64');
+    if (!this.isPlaceholder(pfxBase64) && !this.isPlaceholder(passphrase)) {
+      const pfx = Buffer.from(pfxBase64!, 'base64');
       this.cachedCredentials = {
         pfx,
         passphrase: passphrase || ''
@@ -81,7 +89,7 @@ export class AeatCertificateProvider {
     const cert = process.env.AEAT_CERT_PEM;
     const key = process.env.AEAT_KEY_PEM;
 
-    if (cert && key) {
+    if (!this.isPlaceholder(cert) && !this.isPlaceholder(key)) {
       this.cachedCredentials = {
         cert,
         key

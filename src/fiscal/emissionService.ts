@@ -142,6 +142,28 @@ export function getLastFiscalRecord(
 export async function emitFiscalInvoice(
   params: EmitFiscalInvoiceParams
 ): Promise<EmitFiscalInvoiceResult> {
+  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend
+  if (typeof window !== 'undefined') {
+    const res = await fetch('/api/fiscal/emit-invoice', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        invoiceDraft: params.invoiceDraft,
+        fiscalConfig: params.fiscalConfig
+      })
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || `Error en emisión fiscal de backend: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return {
+      invoice: data.invoice,
+      fiscalRecord: data.fiscalRecord,
+      fiscalRecordRef: data.fiscalRecordRef
+    };
+  }
+
   const { fiscalConfig } = params;
 
   // Validación obligatoria del obligado tributario antes de encolar
@@ -150,7 +172,7 @@ export async function emitFiscalInvoice(
     throw new Error('emitFiscalInvoice: obligadoTributarioId es obligatorio y no puede estar vacío ni ser ES_UNKNOWN.');
   }
 
-  // Serialización aislada por obligadoTributarioId
+  // Serialización aislada por obligadoTributarioId en backend
   const currentQueue = emissionQueuesByObligado.get(obligadoTributarioId) || Promise.resolve();
 
   const nextPromise = currentQueue.then(async () => {
@@ -181,6 +203,15 @@ async function executeEmitFiscalInvoice(
     previousRecord = getLastFiscalRecord(obligadoTributarioId, {
       candidateRefs: params.existingRecordRefs
     });
+    if (!previousRecord && typeof window === 'undefined') {
+      try {
+        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+        const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+        if (latestFromCustody) {
+          previousRecord = latestFromCustody;
+        }
+      } catch {}
+    }
   }
 
   let hashAnterior = '';
@@ -290,7 +321,16 @@ async function executeEmitFiscalInvoice(
 
   // 7. Persistir el FiscalRecord en su única fuente persistente (/fiscal_records/{recordId})
   // Si la persistencia falla, el error debe propagarse obligatoriamente al llamador
-  const saveFn = persistRecordFn || saveFiscalRecordToCloud;
+  const defaultSaveFn = async (rec: FiscalRecord) => {
+    if (typeof window === 'undefined') {
+      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+      await BackendFiscalCustody.saveFiscalRecord(rec);
+    } else {
+      await saveFiscalRecordToCloud(rec).catch(() => {});
+    }
+    return true;
+  };
+  const saveFn = persistRecordFn || defaultSaveFn;
   await saveFn(fiscalRecord);
 
   // 8. Generar la referencia liviana indexable para AppData
@@ -337,6 +377,28 @@ export interface EmitFiscalAnulacionResult {
 export async function emitFiscalAnulacion(
   params: EmitFiscalAnulacionParams
 ): Promise<EmitFiscalAnulacionResult> {
+  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend
+  if (typeof window !== 'undefined') {
+    const res = await fetch('/api/fiscal/emit-anulacion', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        facturaAnulada: params.facturaAnulada,
+        fiscalConfig: params.fiscalConfig,
+        obligadoTributarioId: params.obligadoTributarioId
+      })
+    });
+    if (!res.ok) {
+      const errJson = await res.json().catch(() => ({}));
+      throw new Error(errJson.error || `Error en anulación fiscal de backend: HTTP ${res.status}`);
+    }
+    const data = await res.json();
+    return {
+      fiscalRecord: data.fiscalRecord,
+      fiscalRecordRef: data.fiscalRecordRef
+    };
+  }
+
   const { fiscalConfig } = params;
   const obligadoTributarioId = params.obligadoTributarioId || fiscalConfig.obligadoTributarioId || fiscalConfig.nifEmisor;
   if (!obligadoTributarioId || obligadoTributarioId.trim() === '' || obligadoTributarioId === 'ES_UNKNOWN') {
@@ -369,6 +431,15 @@ async function executeEmitFiscalAnulacion(
     previousRecord = getLastFiscalRecord(obligadoTributarioId, {
       candidateRefs: params.existingRecordRefs
     });
+    if (!previousRecord && typeof window === 'undefined') {
+      try {
+        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+        const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+        if (latestFromCustody) {
+          previousRecord = latestFromCustody;
+        }
+      } catch {}
+    }
   }
 
   let hashAnterior = '';
@@ -413,7 +484,16 @@ async function executeEmitFiscalAnulacion(
     throw new Error(`emitFiscalAnulacion: Fallo crítico de integridad criptográfica en el registro de anulación: ${verification.reason}`);
   }
 
-  const saveFn = persistRecordFn || saveFiscalRecordToCloud;
+  const defaultSaveFn = async (rec: FiscalRecord) => {
+    if (typeof window === 'undefined') {
+      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+      await BackendFiscalCustody.saveFiscalRecord(rec);
+    } else {
+      await saveFiscalRecordToCloud(rec).catch(() => {});
+    }
+    return true;
+  };
+  const saveFn = persistRecordFn || defaultSaveFn;
   await saveFn(fiscalRecord);
 
   const fiscalRecordRef = createFiscalRecordRef(fiscalRecord);
