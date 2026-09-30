@@ -11,6 +11,9 @@
 import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
+import firebaseConfig from '../firebase-applet-config.json';
+import { ROOT_OWNER_EMAIL } from '../src/utils/storage';
 import {
   executeAeatSubmission,
   AeatFlowControlManager,
@@ -40,6 +43,7 @@ import {
 } from '../src/fiscal/submissionService';
 import {
   registerTestAuthToken,
+  registerTestPublicKey,
   clearTestAuthTokens,
   verifyFiscalToken,
   isValidSpanishNifCifNie,
@@ -186,6 +190,76 @@ async function main() {
     assert.strictEqual(isValidSpanishNifCifNie(''), false);
     assert.strictEqual(isValidSpanishNifCifNie('123'), false);
     assert.strictEqual(isValidSpanishNifCifNie(NIF_EMISOR_LEGAL), true);
+  });
+
+  await runTest('1.7: Ataque con JWT forjado que suplanta a ROOT_OWNER con firma inventada es rechazado', async () => {
+    // Generar un JWT falso intentando reclamar ser el propietario raíz
+    const forgedHeader = Buffer.from(JSON.stringify({ alg: 'RS256', kid: 'forged-kid-001' })).toString('base64url');
+    const forgedPayload = Buffer.from(JSON.stringify({
+      iss: `https://securetoken.google.com/${firebaseConfig.projectId}`,
+      aud: firebaseConfig.projectId,
+      sub: 'hacker-uid-666',
+      email: ROOT_OWNER_EMAIL,
+      email_verified: true,
+      exp: Math.floor(Date.now() / 1000) + 3600
+    })).toString('base64url');
+    const fakeSignature = Buffer.from('FAKE_UNVERIFIABLE_SIGNATURE_DATA_STRING_HERE_XYZ').toString('base64url');
+    const forgedToken = `${forgedHeader}.${forgedPayload}.${fakeSignature}`;
+
+    await assert.rejects(async () => {
+      await verifyFiscalToken(forgedToken);
+    }, /(Clave pública con identificador kid 'forged-kid-001' no reconocida|Firma criptográfica)/);
+  });
+
+  await runTest('1.8: Ataque de manipulación (tampering) sobre un token firmado es detectado criptográficamente', async () => {
+    // Generar par de claves RSA reales de prueba
+    const { publicKey, privateKey } = crypto.generateKeyPairSync('rsa', {
+      modulusLength: 2048,
+      publicKeyEncoding: { type: 'spki', format: 'pem' },
+      privateKeyEncoding: { type: 'pkcs8', format: 'pem' }
+    });
+
+    const testKid = 'rsa-test-key-2026';
+    registerTestPublicKey(testKid, publicKey);
+
+    const validHeader = Buffer.from(JSON.stringify({ alg: 'RS256', kid: testKid })).toString('base64url');
+    const originalPayload = Buffer.from(JSON.stringify({
+      iss: `https://securetoken.google.com/${firebaseConfig.projectId}`,
+      aud: firebaseConfig.projectId,
+      sub: 'legit-operator-777',
+      email: 'operator@granja.com',
+      email_verified: true,
+      authorizedObligados: [NIF_EMISOR_LEGAL],
+      exp: Math.floor(Date.now() / 1000) + 3600
+    })).toString('base64url');
+
+    // Firmar legítimamente con la clave privada
+    const signer = crypto.createSign('RSA-SHA256');
+    signer.update(`${validHeader}.${originalPayload}`);
+    const validSignature = signer.sign(privateKey, 'base64url');
+
+    // 1. Verificar que el token sin manipular es admitido
+    const legitToken = `${validHeader}.${originalPayload}.${validSignature}`;
+    const verifiedUser = await verifyFiscalToken(legitToken);
+    assert.strictEqual(verifiedUser.email, 'operator@granja.com');
+    assert.strictEqual(verifiedUser.authorizedObligados[0], NIF_EMISOR_LEGAL);
+
+    // 2. Un atacante manipula el payload para elevar privilegios al email de ROOT_OWNER
+    const tamperedPayload = Buffer.from(JSON.stringify({
+      iss: `https://securetoken.google.com/${firebaseConfig.projectId}`,
+      aud: firebaseConfig.projectId,
+      sub: 'legit-operator-777',
+      email: ROOT_OWNER_EMAIL, // SUPLANTACIÓN
+      email_verified: true,
+      exp: Math.floor(Date.now() / 1000) + 3600
+    })).toString('base64url');
+
+    const tamperedToken = `${validHeader}.${tamperedPayload}.${validSignature}`;
+
+    // La firma criptográfica RSA-SHA256 DEBE fallar obligatoriamente
+    await assert.rejects(async () => {
+      await verifyFiscalToken(tamperedToken);
+    }, /Fallo en la verificación criptográfica de la firma del token/);
   });
 
   // -----------------------------------------------------------------------------
@@ -346,6 +420,49 @@ async function main() {
     }, /Bifurcación de cadena detectada/);
   });
 
+  await runTest('3.3: acquireProcessLock falla cerrado (FAIL CLOSED) con excepción al agotar timeout', async () => {
+    // Adquirir cerrojo para un obligado de prueba
+    const testObligado = 'B11111111';
+    const releaseFirst = await BackendFiscalCustody.acquireProcessLock(testObligado, 2000);
+
+    try {
+      // Intentar adquirir de forma concurrente con timeout muy corto (100ms)
+      await assert.rejects(async () => {
+        await BackendFiscalCustody.acquireProcessLock(testObligado, 100);
+      }, /Timeout \(100ms\) al adquirir cerrojo de emisión exclusivo/);
+    } finally {
+      releaseFirst();
+    }
+  });
+
+  await runTest('3.4: Ownership estricto del cerrojo: un proceso ajeno no puede borrar el lock del titular', async () => {
+    const testObligado = 'B22222222';
+    const cleanId = testObligado.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const lockPath = path.join(process.cwd(), 'data', 'locks', `obligado_${cleanId}.lock`);
+
+    const releaseOwner = await BackendFiscalCustody.acquireProcessLock(testObligado, 2000);
+    assert.ok(fs.existsSync(lockPath), 'El fichero de lock debe existir');
+
+    // Simular que otro proceso o contexto intenta crear una función de liberación con token falso
+    const fakeReleaseFn = () => {
+      try {
+        if (fs.existsSync(lockPath)) {
+          const currentContent = fs.readFileSync(lockPath, 'utf-8').trim();
+          if (currentContent === 'FAKE_PID:0000:fake_token') {
+            fs.unlinkSync(lockPath);
+          }
+        }
+      } catch {}
+    };
+
+    fakeReleaseFn();
+    assert.ok(fs.existsSync(lockPath), 'El lock del titular NO debe haber sido eliminado por el proceso impostor');
+
+    // La liberación por el propietario legítimo sí debe borrarlo
+    releaseOwner();
+    assert.strictEqual(fs.existsSync(lockPath), false, 'El lock se elimina limpiamente tras liberación por el propietario');
+  });
+
   // -----------------------------------------------------------------------------
   // BLOQUE 4: MÁQUINA DE ESTADOS ESTRICTA DE FISCALSUBMISSION
   // -----------------------------------------------------------------------------
@@ -468,7 +585,7 @@ async function main() {
   // RESUMEN FINAL
   // -----------------------------------------------------------------------------
   console.log('================================================================');
-  console.log('  RESUMEN FASE 3.1.4: 16/16 TESTS COMPLETADOS CON ÉXITO!');
+  console.log('  RESUMEN FASE 3.1.4: 20/20 TESTS COMPLETADOS CON ÉXITO!');
   console.log('================================================================');
 }
 

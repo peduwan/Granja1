@@ -208,10 +208,8 @@ async function executeEmitFiscalInvoice(
 
   let releaseProcessLock: (() => void) | null = null;
   if (typeof window === 'undefined') {
-    try {
-      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-      releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
-    } catch {}
+    const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+    releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
   }
 
   try {
@@ -469,10 +467,8 @@ async function executeEmitFiscalAnulacion(
 
   let releaseProcessLock: (() => void) | null = null;
   if (typeof window === 'undefined') {
-    try {
-      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-      releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
-    } catch {}
+    const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+    releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
   }
 
   try {

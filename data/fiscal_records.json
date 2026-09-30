@@ -1,8 +1,8 @@
 [
   {
-    "id": "frec-fac-1790767172126-ehsx",
+    "id": "frec-fac-1790777864894-9sih",
     "obligadoTributarioId": "B88888888",
-    "invoiceId": "fac-1790767172126-ehsx",
+    "invoiceId": "fac-1790777864894-9sih",
     "tipoRegistro": "alta",
     "modoFiscal": "VERI_FACTU",
     "versionEspecificacion": "1.0",
@@ -29,7 +29,7 @@
     "factura": {
       "numeroFactura": "FAC-FORGE-01",
       "fechaExpedicion": "2026-02-15",
-      "horaExpedicion": "11:19:32",
+      "horaExpedicion": "14:17:44",
       "tipoFactura": "F1",
       "descripcionOperacion": "Venta y distribución de huevos de granja",
       "facturaSimplificadaArt7273": "N",
@@ -53,12 +53,12 @@
       "primerRegistro": true
     },
     "huella": {
-      "hash": "3D16E23CACC31E21D6C582EEDC070EEC421868A4E846734196FD830F3D8CA20E",
+      "hash": "4371C9D47ACF3F55DED7029246BF3431FFEE9B686759575CF1F39B0D3ADE7B23",
       "algoritmo": "SHA-256",
       "especificacionVersion": "HAC/1177/2024",
-      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-FORGE-01&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=&FechaHoraHusoGenRegistro=2026-09-30T11:19:32+00:00"
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-FORGE-01&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=&FechaHoraHusoGenRegistro=2026-09-30T14:17:44+00:00"
     },
-    "fechaHoraHusoGenRegistro": "2026-09-30T11:19:32+00:00",
+    "fechaHoraHusoGenRegistro": "2026-09-30T14:17:44+00:00",
     "qr": {
       "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-FORGE-01&fecha=15-02-2026&importe=36.40",
       "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-FORGE-01&fecha=15-02-2026&importe=36.40",
@@ -68,9 +68,9 @@
     "creadoEn": "2026-02-15T10:00:00Z"
   },
   {
-    "id": "frec-fac-1790767172180-7cbj",
+    "id": "frec-fac-1790777864949-ffs6",
     "obligadoTributarioId": "B88888888",
-    "invoiceId": "fac-1790767172180-7cbj",
+    "invoiceId": "fac-1790777864949-ffs6",
     "tipoRegistro": "alta",
     "modoFiscal": "VERI_FACTU",
     "versionEspecificacion": "1.0",
@@ -97,7 +97,7 @@
     "factura": {
       "numeroFactura": "FAC-FORGE-02",
       "fechaExpedicion": "2026-02-15",
-      "horaExpedicion": "11:19:32",
+      "horaExpedicion": "14:17:44",
       "tipoFactura": "F1",
       "descripcionOperacion": "Venta y distribución de huevos de granja",
       "facturaSimplificadaArt7273": "N",
@@ -123,16 +123,16 @@
         "idEmisorFactura": "B88888888",
         "numSerieFactura": "FAC-FORGE-01",
         "fechaExpedicionFactura": "2026-02-15",
-        "huella": "3D16E23CACC31E21D6C582EEDC070EEC421868A4E846734196FD830F3D8CA20E"
+        "huella": "4371C9D47ACF3F55DED7029246BF3431FFEE9B686759575CF1F39B0D3ADE7B23"
       }
     },
     "huella": {
-      "hash": "4C0E2B353305E735A724B8AB58094919F6EDA77598704836BC1BF96720C76F91",
+      "hash": "2851B8C6A8665A25B510484EE9954FB83962659D26A09CC34E9588D34021F616",
       "algoritmo": "SHA-256",
       "especificacionVersion": "HAC/1177/2024",
-      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-FORGE-02&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=3D16E23CACC31E21D6C582EEDC070EEC421868A4E846734196FD830F3D8CA20E&FechaHoraHusoGenRegistro=2026-09-30T11:19:32+00:00"
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-FORGE-02&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=4371C9D47ACF3F55DED7029246BF3431FFEE9B686759575CF1F39B0D3ADE7B23&FechaHoraHusoGenRegistro=2026-09-30T14:17:44+00:00"
     },
-    "fechaHoraHusoGenRegistro": "2026-09-30T11:19:32+00:00",
+    "fechaHoraHusoGenRegistro": "2026-09-30T14:17:44+00:00",
     "qr": {
       "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-FORGE-02&fecha=15-02-2026&importe=36.40",
       "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-FORGE-02&fecha=15-02-2026&importe=36.40",
@@ -142,9 +142,9 @@
     "creadoEn": "2026-02-15T10:00:00Z"
   },
   {
-    "id": "frec-fac-1790767172206-kjt6",
+    "id": "frec-fac-1790777864978-gh04",
     "obligadoTributarioId": "B88888888",
-    "invoiceId": "fac-1790767172206-kjt6",
+    "invoiceId": "fac-1790777864978-gh04",
     "tipoRegistro": "alta",
     "modoFiscal": "VERI_FACTU",
     "versionEspecificacion": "1.0",
@@ -171,7 +171,7 @@
     "factura": {
       "numeroFactura": "FAC-PARALLEL-A",
       "fechaExpedicion": "2026-02-15",
-      "horaExpedicion": "11:19:32",
+      "horaExpedicion": "14:17:44",
       "tipoFactura": "F1",
       "descripcionOperacion": "Venta y distribución de huevos de granja",
       "facturaSimplificadaArt7273": "N",
@@ -197,16 +197,16 @@
         "idEmisorFactura": "B88888888",
         "numSerieFactura": "FAC-FORGE-02",
         "fechaExpedicionFactura": "2026-02-15",
-        "huella": "4C0E2B353305E735A724B8AB58094919F6EDA77598704836BC1BF96720C76F91"
+        "huella": "2851B8C6A8665A25B510484EE9954FB83962659D26A09CC34E9588D34021F616"
       }
     },
     "huella": {
-      "hash": "D77294E9DC83DEC6BE775A321EA6C55DDC54E39FFEE78E101FDEC12D822091E6",
+      "hash": "6217CCC7DF9DF68C47F40D58EE350666C7B414E25375AA00A211037A03163392",
       "algoritmo": "SHA-256",
       "especificacionVersion": "HAC/1177/2024",
-      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-PARALLEL-A&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=4C0E2B353305E735A724B8AB58094919F6EDA77598704836BC1BF96720C76F91&FechaHoraHusoGenRegistro=2026-09-30T11:19:32+00:00"
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-PARALLEL-A&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=2851B8C6A8665A25B510484EE9954FB83962659D26A09CC34E9588D34021F616&FechaHoraHusoGenRegistro=2026-09-30T14:17:44+00:00"
     },
-    "fechaHoraHusoGenRegistro": "2026-09-30T11:19:32+00:00",
+    "fechaHoraHusoGenRegistro": "2026-09-30T14:17:44+00:00",
     "qr": {
       "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-PARALLEL-A&fecha=15-02-2026&importe=36.40",
       "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-PARALLEL-A&fecha=15-02-2026&importe=36.40",
@@ -216,9 +216,9 @@
     "creadoEn": "2026-02-15T10:00:00Z"
   },
   {
-    "id": "frec-fac-1790767172206-uoi6",
+    "id": "frec-fac-1790777864978-rg48",
     "obligadoTributarioId": "B88888888",
-    "invoiceId": "fac-1790767172206-uoi6",
+    "invoiceId": "fac-1790777864978-rg48",
     "tipoRegistro": "alta",
     "modoFiscal": "VERI_FACTU",
     "versionEspecificacion": "1.0",
@@ -245,7 +245,7 @@
     "factura": {
       "numeroFactura": "FAC-PARALLEL-B",
       "fechaExpedicion": "2026-02-15",
-      "horaExpedicion": "11:19:32",
+      "horaExpedicion": "14:17:45",
       "tipoFactura": "F1",
       "descripcionOperacion": "Venta y distribución de huevos de granja",
       "facturaSimplificadaArt7273": "N",
@@ -271,16 +271,16 @@
         "idEmisorFactura": "B88888888",
         "numSerieFactura": "FAC-PARALLEL-A",
         "fechaExpedicionFactura": "2026-02-15",
-        "huella": "D77294E9DC83DEC6BE775A321EA6C55DDC54E39FFEE78E101FDEC12D822091E6"
+        "huella": "6217CCC7DF9DF68C47F40D58EE350666C7B414E25375AA00A211037A03163392"
       }
     },
     "huella": {
-      "hash": "573050A7FB5127D65A0CAD579F31B624887B49D2C01C45764EEA6ADF5194C9D4",
+      "hash": "D928C49E41D1D4B5AF75BDE6A0F74930420E294A8C9084C43D44B7F60BA2E747",
       "algoritmo": "SHA-256",
       "especificacionVersion": "HAC/1177/2024",
-      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-PARALLEL-B&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=D77294E9DC83DEC6BE775A321EA6C55DDC54E39FFEE78E101FDEC12D822091E6&FechaHoraHusoGenRegistro=2026-09-30T11:19:32+00:00"
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-PARALLEL-B&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=6217CCC7DF9DF68C47F40D58EE350666C7B414E25375AA00A211037A03163392&FechaHoraHusoGenRegistro=2026-09-30T14:17:44+00:00"
     },
-    "fechaHoraHusoGenRegistro": "2026-09-30T11:19:32+00:00",
+    "fechaHoraHusoGenRegistro": "2026-09-30T14:17:44+00:00",
     "qr": {
       "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-PARALLEL-B&fecha=15-02-2026&importe=36.40",
       "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-PARALLEL-B&fecha=15-02-2026&importe=36.40",

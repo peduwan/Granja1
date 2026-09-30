@@ -15,6 +15,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import crypto from 'node:crypto';
 import { FiscalRecord, FiscalSubmission, FiscalEvent } from './types';
 import { verifyFiscalRecordHash } from './hashService';
 
@@ -101,6 +102,22 @@ function persistEventsToDisk(): void {
   fs.renameSync(tmpFile, EVENTS_FILE);
 }
 
+// Registro en memoria de cerrojos activos en este proceso para re-entrancia segura
+const activeLocksByObligado = new Map<string, string>();
+
+/**
+ * Comprueba si un proceso sigue en ejecución en el sistema operativo.
+ */
+function isProcessAlive(pid: number): boolean {
+  if (isNaN(pid) || pid <= 0) return false;
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (e: any) {
+    return e.code === 'EPERM'; // Si EPERM, el proceso existe pero pertenece a otro usuario
+  }
+}
+
 export class BackendFiscalCustody {
   private static init(): void {
     if (!initialized) {
@@ -109,61 +126,83 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Cerrojo a nivel de proceso/sistema de ficheros para serializar emisiones concurrentes.
+   * Cerrojo exclusivo a nivel de proceso/sistema de ficheros para serializar emisiones concurrentes.
+   * - FAIL CLOSED: Si no se adquiere en timeoutMs, lanza un error fatal.
+   * - OWNERSHIP: Cada adquisición genera un token criptográfico único; solo el titular puede liberarlo.
+   * - LIVENESS: Solo descarta cerrojos si el PID titular ha muerto.
    */
   public static async acquireProcessLock(obligadoTributarioId: string, timeoutMs = 8000): Promise<() => void> {
     ensureDataDir();
     const cleanId = obligadoTributarioId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const lockPath = path.join(LOCKS_DIR, `obligado_${cleanId}.lock`);
     const startTime = Date.now();
+    const ownerToken = `${process.pid}:${Date.now()}:${crypto.randomBytes(8).toString('hex')}`;
 
     while (Date.now() - startTime < timeoutMs) {
       try {
         const fd = fs.openSync(lockPath, 'wx');
-        fs.writeSync(fd, `${process.pid}:${Date.now()}`);
+        fs.writeSync(fd, ownerToken);
         fs.closeSync(fd);
 
-        // Retornar función de liberación del cerrojo
+        activeLocksByObligado.set(obligadoTributarioId, ownerToken);
+
+        // Retornar función de liberación condicional exclusiva del titular
+        let released = false;
         return () => {
+          if (released) return;
+          released = true;
+          activeLocksByObligado.delete(obligadoTributarioId);
           try {
             if (fs.existsSync(lockPath)) {
-              fs.unlinkSync(lockPath);
+              const currentContent = fs.readFileSync(lockPath, 'utf-8').trim();
+              if (currentContent === ownerToken) {
+                fs.unlinkSync(lockPath);
+              }
             }
           } catch {}
         };
       } catch (err: any) {
         if (err.code === 'EEXIST') {
-          // El lock ya existe: verificar si es un lock huérfano (> 15 segundos)
+          // El lock ya existe: verificar si el proceso dueño sigue vivo
           try {
-            const stat = fs.statSync(lockPath);
-            if (Date.now() - stat.mtimeMs > 15000) {
-              fs.unlinkSync(lockPath);
-              continue;
+            if (fs.existsSync(lockPath)) {
+              const rawContent = fs.readFileSync(lockPath, 'utf-8').trim();
+              const [ownerPidStr, timestampStr] = rawContent.split(':');
+              const ownerPid = parseInt(ownerPidStr, 10);
+              const lockTimestamp = parseInt(timestampStr, 10);
+
+              const ownerAlive = isProcessAlive(ownerPid);
+              const isDeadOwner = !ownerAlive && (Date.now() - lockTimestamp > 2000);
+              const isExtremeStale = (Date.now() - lockTimestamp > 120000);
+
+              if (isDeadOwner || isExtremeStale) {
+                try {
+                  fs.unlinkSync(lockPath);
+                  continue;
+                } catch {}
+              }
             }
           } catch {}
-          await new Promise(resolve => setTimeout(resolve, 30));
+
+          await new Promise(resolve => setTimeout(resolve, 40));
         } else {
-          break;
+          throw err;
         }
       }
     }
 
-    // Fallback de contingencia si el timeout expira
-    return () => {
-      try {
-        if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
-      } catch {}
-    };
+    // FAIL CLOSED: Si expira el tiempo sin adquirir el cerrojo, rechazar la operación rotundamente
+    throw new Error(
+      `BackendFiscalCustody: Timeout (${timeoutMs}ms) al adquirir cerrojo de emisión exclusivo para el obligado '${obligadoTributarioId}'. Operación fiscal abortada para evitar condiciones de carrera o bifurcación.`
+    );
   }
 
   /**
    * Guarda un FiscalRecord en la custodia inmutable de backend tras verificar su integridad
    * y garantizar la no-bifurcación de la cadena criptográfica SHA-256.
+   * Adquiere automáticamente el cerrojo si la llamada no lo sostiene previamente.
    */
   public static async saveFiscalRecord(record: FiscalRecord): Promise<void> {
-    this.init();
-    loadFromDisk();
-
     if (!record || !record.id) {
       throw new Error('BackendFiscalCustody: Se requiere un FiscalRecord válido con identificador.');
     }
@@ -172,40 +211,56 @@ export class BackendFiscalCustody {
       throw new Error('BackendFiscalCustody: obligadoTributarioId inválido o no especificado.');
     }
 
-    // 1. Verificación de integridad matemática previa a la custodia
-    const verification = await verifyFiscalRecordHash(record);
-    if (!verification.valid) {
-      throw new Error(`BackendFiscalCustody: Fallo de integridad criptográfica en el registro (${verification.reason}). Custodia rechazada.`);
+    // Si este hilo no posee el lock del obligado, adquirirlo transaccionalmente
+    const alreadyLocked = activeLocksByObligado.has(record.obligadoTributarioId);
+    let releaseLock: (() => void) | null = null;
+    if (!alreadyLocked) {
+      releaseLock = await this.acquireProcessLock(record.obligadoTributarioId);
     }
 
-    // 2. Comprobar que no exista duplicado por ID
-    const exists = recordsCache.some(r => r.id === record.id);
-    if (exists) {
-      throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en la custodia fiscal.`);
-    }
-
-    // 3. Garantía absoluta de no bifurcación de la cadena por concurrencia
-    const latestInChain = this.getLatestFiscalRecord(record.obligadoTributarioId);
-    if (record.encadenamiento.primerRegistro) {
-      if (latestInChain) {
-        throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen ${recordsCache.filter(r => r.obligadoTributarioId === record.obligadoTributarioId).length} registros en custodia para el obligado ${record.obligadoTributarioId}.`);
-      }
-    } else {
-      if (!latestInChain) {
-        throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en custodia para el obligado ${record.obligadoTributarioId}.`);
-      }
-      if (record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
-        throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada. El hash del registro anterior no coincide con el último registro existente en la custodia fiscal.`);
-      }
-    }
-
-    // 4. Persistir en custodia inmutable
-    recordsCache.push(Object.freeze(record));
     try {
-      persistRecordsToDisk();
-    } catch (err) {
-      console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
-      throw err;
+      this.init();
+      loadFromDisk();
+
+      // 1. Verificación de integridad matemática previa a la custodia
+      const verification = await verifyFiscalRecordHash(record);
+      if (!verification.valid) {
+        throw new Error(`BackendFiscalCustody: Fallo de integridad criptográfica en el registro (${verification.reason}). Custodia rechazada.`);
+      }
+
+      // 2. Comprobar que no exista duplicado por ID
+      const exists = recordsCache.some(r => r.id === record.id);
+      if (exists) {
+        throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en la custodia fiscal.`);
+      }
+
+      // 3. Garantía absoluta de no bifurcación de la cadena por concurrencia
+      const latestInChain = this.getLatestFiscalRecord(record.obligadoTributarioId);
+      if (record.encadenamiento.primerRegistro) {
+        if (latestInChain) {
+          throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen ${recordsCache.filter(r => r.obligadoTributarioId === record.obligadoTributarioId).length} registros en custodia para el obligado ${record.obligadoTributarioId}.`);
+        }
+      } else {
+        if (!latestInChain) {
+          throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en custodia para el obligado ${record.obligadoTributarioId}.`);
+        }
+        if (record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
+          throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada. El hash del registro anterior no coincide con el último registro existente en la custodia fiscal.`);
+        }
+      }
+
+      // 4. Persistir en custodia inmutable
+      recordsCache.push(Object.freeze(record));
+      try {
+        persistRecordsToDisk();
+      } catch (err) {
+        console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
+        throw err;
+      }
+    } finally {
+      if (releaseLock) {
+        releaseLock();
+      }
     }
   }
 

@@ -931,6 +931,15 @@ app.post("/api/fiscal/emit-anulacion", requireFiscalAuthMiddleware, async (req: 
 // 3. Consulta de registros en custodia de backend
 app.get("/api/fiscal/records", requireFiscalAuthMiddleware, (req: FiscalAuthenticatedRequest, res) => {
   const obligado = typeof req.query.obligado === 'string' ? req.query.obligado : undefined;
+  if (obligado) {
+    try {
+      assertObligadoAuthorized(req.fiscalUser!, obligado);
+    } catch (authErr: any) {
+      return res.status(authErr.statusCode || 403).json({ error: authErr.message });
+    }
+  } else if (!req.fiscalUser!.isOwner) {
+    return res.status(403).json({ error: "Debe especificar un parámetro 'obligado' autorizado." });
+  }
   const records = BackendFiscalCustody.getAllFiscalRecords(obligado);
   res.json({ records, count: records.length });
 });
@@ -939,6 +948,11 @@ app.get("/api/fiscal/records/:id", requireFiscalAuthMiddleware, (req: FiscalAuth
   const record = BackendFiscalCustody.getFiscalRecordById(req.params.id);
   if (!record) {
     return res.status(404).json({ error: `FiscalRecord '${req.params.id}' no encontrado en custodia de backend.` });
+  }
+  try {
+    assertObligadoAuthorized(req.fiscalUser!, record.obligadoTributarioId);
+  } catch (authErr: any) {
+    return res.status(authErr.statusCode || 403).json({ error: authErr.message });
   }
   res.json(record);
 });
@@ -953,17 +967,22 @@ app.get("/api/fiscal/cert-status", (_req, res) => {
 });
 
 // 5. Remisión a AEAT con verificación criptográfica estricta y cerrojo de concurrencia
+// Exige un fiscalRecordId preexistente en custodia de backend (prohibido inyectar registros arbitrarios)
 app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
-    const { submission, fiscalRecord, config, options, fiscalRecordId } = req.body;
+    const { submission, config, options, fiscalRecordId } = req.body;
 
-    let recordToSubmit = fiscalRecord;
-    if (!recordToSubmit && fiscalRecordId) {
-      recordToSubmit = BackendFiscalCustody.getFiscalRecordById(fiscalRecordId);
+    if (!fiscalRecordId || typeof fiscalRecordId !== 'string') {
+      return res.status(400).json({
+        error: "Campo 'fiscalRecordId' obligatorio. Solo se permite remitir registros existentes en la custodia fiscal autoritativa del backend."
+      });
     }
 
+    const recordToSubmit = BackendFiscalCustody.getFiscalRecordById(fiscalRecordId);
     if (!recordToSubmit) {
-      return res.status(400).json({ error: "Faltan datos obligatorios: fiscalRecord o fiscalRecordId son requeridos." });
+      return res.status(404).json({
+        error: `FiscalRecord con id '${fiscalRecordId}' no encontrado en la custodia fiscal del backend. Solo pueden remitirse registros legítimos previamente emitidos.`
+      });
     }
 
     // Validar autorización del obligado para el usuario autenticado
@@ -1010,77 +1029,6 @@ app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAu
       error: "Error en el transporte AEAT",
       message: err.message
     });
-  }
-});
-
-// 6. Endpoint de compatibilidad procesar-factura protegido contra inyección y valores ficticios
-app.post("/api/verifactu/procesar-factura", async (req, res) => {
-  try {
-    const { factura, config } = req.body;
-    if (!factura || !factura.numeroFactura) {
-      return res.status(400).json({ error: "Faltan datos obligatorios de la factura." });
-    }
-
-    const nifEmisor = (config?.cifEmpresa || config?.nifEmisor || "").trim().toUpperCase();
-    if (!nifEmisor || nifEmisor === 'ES_UNKNOWN' || nifEmisor === 'B12345678') {
-      return res.status(400).json({ error: "NIF de emisor obligatorio y válido requerido (prohibido B12345678 o ES_UNKNOWN)." });
-    }
-
-    const result = await emitFiscalInvoice({
-      invoiceDraft: factura,
-      fiscalConfig: {
-        obligadoTributarioId: nifEmisor,
-        nifEmisor,
-        nombreRazonEmisor: config?.nombreEmpresa || 'Gestión Avícola',
-        modalidad: 'VERI_FACTU',
-        versionEspecificacion: '1.0',
-        sistemaInformatico: {
-          nombreRazon: 'Gestión Avícola AgroTech Software S.L.',
-          nif: 'B99000001',
-          nombreSistemaInformatico: 'Gestión Avícola',
-          idSistemaInformatico: '01',
-          version: '1.0.0',
-          numeroInstalacion: '01',
-          tipoUsoPosibleSoloVerifactu: 'S',
-          tipoUsoPosibleMultiOT: 'N',
-          indicadorMultiplesOT: 'N'
-        },
-        entornoAeat: 'pruebas',
-        remisionAutomatica: true,
-        reintentosMaximos: 3,
-        minutosEntreReintentos: 1,
-        transporte: {
-          endpointUrl: '',
-          timeoutMs: 30000,
-          certificadoConfigurado: false
-        },
-        certificadoConfigurado: false,
-        fechaActivacion: new Date().toISOString()
-      },
-      persistRecordFn: async (record) => {
-        await BackendFiscalCustody.saveFiscalRecord(record);
-      }
-    });
-
-    return res.json({
-      success: true,
-      hashActual: result.fiscalRecord.huella.hash,
-      hashAnterior: result.fiscalRecord.encadenamiento.registroAnterior?.huella || '',
-      fechaHoraSellado: result.fiscalRecord.fechaHoraHusoGenRegistro,
-      urlVeriFactu: result.fiscalRecord.qr.url,
-      qrDataUri: result.fiscalRecord.qr.qrDataUri,
-      tipoFactura: result.fiscalRecord.factura.tipoFactura,
-      software: {
-        nombre: "Gestión Avícola",
-        version: "1.0.0",
-        fabricante: "Gestión Avícola AgroTech Software S.L."
-      },
-      fiscalRecord: result.fiscalRecord,
-      fiscalRecordRef: result.fiscalRecordRef
-    });
-  } catch (err: any) {
-    console.error("Error en procesamiento Veri*Factu backend:", err);
-    return res.status(500).json({ error: err.message || "Error interno al procesar el registro Veri*Factu" });
   }
 });
 

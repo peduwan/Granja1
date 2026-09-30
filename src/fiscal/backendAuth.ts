@@ -6,10 +6,11 @@
  * - Real Decreto 1007/2023 (Reglamento Veri*Factu / SIF)
  * - Orden HAC/1177/2024
  *
- * INVARIANTES DE SEGURIDAD:
+ * INVARIANTES DE SEGURIDAD CRIPTOGRÁFICA:
  * 1. Todos los endpoints fiscales de backend exigen autenticación criptográfica.
  * 2. Ningún dato sensible de rol, email o uid enviado por el cliente es de confianza.
- * 3. Se verifica server-side el token Firebase ID.
+ * 3. Se verifica server-side la firma criptográfica RSA-SHA256 (RS256) del token Firebase ID
+ *    contra los certificados públicos oficiales de Google (Google X.509 certs).
  * 4. Solo usuarios autorizados (propietario o usuarios en lista blanca) pueden invocar operaciones fiscales.
  * 5. Se valida estrictamente la correspondencia del obligado tributario con las organizaciones autorizadas.
  * 6. Rechazo taxativo de NIFs ficticios, placeholders ('ES_UNKNOWN', 'B12345678', etc.) y NIFs mal formados.
@@ -33,8 +34,11 @@ export interface FiscalAuthenticatedRequest extends Request {
   fiscalUser?: AuthenticatedFiscalUser;
 }
 
-// Almacén en memoria de tokens de testing autorizados (para ejecución de tests en Node)
+// Almacén en memoria de tokens de testing autorizados (para mocks rápidos de tests unitarios)
 const testTokensRegistry = new Map<string, AuthenticatedFiscalUser>();
+
+// Almacén en memoria de claves públicas de test (para probar firmas criptográficas RS256 en suites de tests)
+const testPublicKeysRegistry = new Map<string, string>();
 
 /**
  * Registra un token de testing en memoria (exclusivamente para suites de pruebas unitarias/integración).
@@ -43,8 +47,53 @@ export function registerTestAuthToken(token: string, user: AuthenticatedFiscalUs
   testTokensRegistry.set(token, user);
 }
 
+/**
+ * Registra una clave pública de test para validación criptográfica de tokens RS256 en suites de tests offline.
+ */
+export function registerTestPublicKey(kid: string, publicKeyPem: string): void {
+  testPublicKeysRegistry.set(kid, publicKeyPem);
+}
+
 export function clearTestAuthTokens(): void {
   testTokensRegistry.clear();
+  testPublicKeysRegistry.clear();
+}
+
+// Caché en memoria de certificados X.509 públicos de Google
+const GOOGLE_CERTS_URL = 'https://www.googleapis.com/robot/v1/metadata/x509/securetoken@system.gserviceaccount.com';
+let googleCertsCache: Record<string, string> | null = null;
+let googleCertsCacheExpiresAt = 0;
+
+/**
+ * Obtiene los certificados públicos oficiales de Google para verificación de Firebase ID Tokens.
+ */
+async function getGooglePublicCerts(forceRefresh = false): Promise<Record<string, string>> {
+  const now = Date.now();
+  if (!forceRefresh && googleCertsCache && now < googleCertsCacheExpiresAt) {
+    return googleCertsCache;
+  }
+
+  try {
+    const res = await fetch(GOOGLE_CERTS_URL);
+    if (!res.ok) {
+      throw new Error(`Error HTTP ${res.status} al recuperar certificados públicos de Google.`);
+    }
+
+    // Parsear encabezado Cache-Control para tiempo de vida de la caché
+    const cacheControl = res.headers.get('cache-control') || '';
+    const maxAgeMatch = cacheControl.match(/max-age=(\d+)/i);
+    const maxAgeSeconds = maxAgeMatch ? parseInt(maxAgeMatch[1], 10) : 3600;
+
+    const certs = await res.json() as Record<string, string>;
+    googleCertsCache = certs;
+    googleCertsCacheExpiresAt = now + (maxAgeSeconds * 1000);
+    return certs;
+  } catch (err: any) {
+    if (googleCertsCache) {
+      return googleCertsCache; // Usar caché existente en caso de fallo de red transitorio
+    }
+    throw new Error(`No se pudieron obtener certificados de autenticación de Google: ${err.message}`);
+  }
 }
 
 /**
@@ -76,22 +125,30 @@ export function isValidSpanishNifCifNie(nifRaw: string): boolean {
 }
 
 /**
- * Verifica un Firebase ID Token o token de prueba de backend.
+ * Verifica criptográficamente un Firebase ID Token (firma RS256 con certificados Google) o token de test.
  */
 export async function verifyFiscalToken(token: string): Promise<AuthenticatedFiscalUser> {
   if (!token || typeof token !== 'string' || token.trim() === '') {
     throw new Error('Token de autenticación vacío o no proporcionado.');
   }
 
-  // 1. Comprobación en registro de tokens de prueba
+  // 1. Comprobación en registro de tokens de prueba autorizados
   if (testTokensRegistry.has(token)) {
     return testTokensRegistry.get(token)!;
   }
 
-  // 2. Parseo y verificación básica de estructura JWT
+  // 2. Parseo y verificación estructural del JWT (header.payload.signature)
   const parts = token.split('.');
   if (parts.length !== 3) {
-    throw new Error('Formato de token de autenticación inválido. Se requiere un JWT válido.');
+    throw new Error('Formato de token de autenticación inválido. Se requiere un JWT válido de 3 partes.');
+  }
+
+  let header: any;
+  try {
+    const headerJson = Buffer.from(parts[0], 'base64url').toString('utf-8');
+    header = JSON.parse(headerJson);
+  } catch {
+    throw new Error('Cabecera del token de autenticación malformada.');
   }
 
   let payload: any;
@@ -102,30 +159,76 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error('Carga útil del token de autenticación malformada.');
   }
 
-  // Comprobar expiración
+  // 3. Verificación formal de cabecera criptográfica
+  if (!header || header.alg !== 'RS256') {
+    throw new Error(`Algoritmo criptográfico de token no permitido ('${header?.alg}'). Solo se admite RS256.`);
+  }
+
+  const kid = header.kid;
+  if (!kid || typeof kid !== 'string') {
+    throw new Error("El token de autenticación no especifica el identificador de clave pública ('kid').");
+  }
+
+  // 4. Verificación criptográfica estricta de la firma digital (RS256)
+  let publicKeyPem: string | undefined = testPublicKeysRegistry.get(kid);
+
+  if (!publicKeyPem) {
+    let googleCerts = await getGooglePublicCerts(false);
+    if (!googleCerts[kid]) {
+      // Reintentar refrescando la caché por si hubo rotación reciente de claves
+      googleCerts = await getGooglePublicCerts(true);
+    }
+    publicKeyPem = googleCerts[kid];
+  }
+
+  if (!publicKeyPem) {
+    throw new Error(`Clave pública con identificador kid '${kid}' no reconocida o no autorizada por Google.`);
+  }
+
+  const signedData = `${parts[0]}.${parts[1]}`;
+  const signatureBase64Url = parts[2];
+
+  try {
+    const verifier = crypto.createVerify('RSA-SHA256');
+    verifier.update(signedData);
+    const isSignatureValid = verifier.verify(publicKeyPem, signatureBase64Url, 'base64url');
+    if (!isSignatureValid) {
+      throw new Error('Firma criptográfica inválida.');
+    }
+  } catch (cryptoErr: any) {
+    throw new Error(`Fallo en la verificación criptográfica de la firma del token: ${cryptoErr.message || 'Firma alterada o no válida'}`);
+  }
+
+  // 5. Verificación de claims canónicos del Firebase ID Token
   const nowSeconds = Math.floor(Date.now() / 1000);
-  if (payload.exp && payload.exp < nowSeconds) {
+  const clockSkewAllowance = 10; // 10 segundos de holgura por desviación horaria
+
+  if (!payload.exp || typeof payload.exp !== 'number' || payload.exp < (nowSeconds - clockSkewAllowance)) {
     throw new Error('El token de autenticación ha expirado.');
   }
 
-  // Comprobar emisor y audiencia con el proyecto Firebase
-  const expectedProjectId = firebaseConfig.projectId;
-  const expectedIssuer = `https://securetoken.google.com/${expectedProjectId}`;
-  if (payload.iss && payload.iss !== expectedIssuer) {
-    // Si no coincide con el emisor Firebase del proyecto
-    if (!payload.mockTest) {
-      throw new Error(`Emisor del token (${payload.iss}) no coincide con el proyecto autorizado.`);
-    }
+  if (payload.iat && typeof payload.iat === 'number' && payload.iat > (nowSeconds + clockSkewAllowance)) {
+    throw new Error('El token de autenticación fue emitido en el futuro.');
   }
 
-  if (payload.aud && payload.aud !== expectedProjectId) {
-    if (!payload.mockTest) {
-      throw new Error(`Audiencia del token (${payload.aud}) no coincide con el ID de proyecto.`);
-    }
+  const expectedProjectId = firebaseConfig.projectId;
+  const expectedIssuer = `https://securetoken.google.com/${expectedProjectId}`;
+
+  if (payload.iss !== expectedIssuer) {
+    throw new Error(`Emisor del token ('${payload.iss}') no coincide con el emisor oficial autorizado ('${expectedIssuer}').`);
+  }
+
+  if (payload.aud !== expectedProjectId) {
+    throw new Error(`Audiencia del token ('${payload.aud}') no coincide con el ID de proyecto autorizado ('${expectedProjectId}').`);
+  }
+
+  const sub = typeof payload.sub === 'string' ? payload.sub.trim() : '';
+  if (!sub || sub.length > 128) {
+    throw new Error("El token de autenticación no contiene un identificador 'sub' válido.");
   }
 
   const email = (payload.email || '').trim().toLowerCase();
-  const uid = (payload.user_id || payload.sub || '').trim();
+  const uid = (payload.user_id || sub).trim();
   const emailVerified = Boolean(payload.email_verified);
 
   if (!email || !uid) {
