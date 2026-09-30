@@ -19,6 +19,7 @@ import { FiscalRecord, FiscalSubmission, FiscalEvent } from './types';
 import { verifyFiscalRecordHash } from './hashService';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
+const LOCKS_DIR = path.join(DATA_DIR, 'locks');
 const RECORDS_FILE = path.join(DATA_DIR, 'fiscal_records.json');
 const SUBMISSIONS_FILE = path.join(DATA_DIR, 'fiscal_submissions.json');
 const EVENTS_FILE = path.join(DATA_DIR, 'fiscal_events.json');
@@ -33,6 +34,9 @@ function ensureDataDir(): void {
   if (!fs.existsSync(DATA_DIR)) {
     fs.mkdirSync(DATA_DIR, { recursive: true });
   }
+  if (!fs.existsSync(LOCKS_DIR)) {
+    fs.mkdirSync(LOCKS_DIR, { recursive: true });
+  }
 }
 
 function loadFromDisk(): void {
@@ -41,6 +45,8 @@ function loadFromDisk(): void {
     if (fs.existsSync(RECORDS_FILE)) {
       const raw = fs.readFileSync(RECORDS_FILE, 'utf-8');
       recordsCache = JSON.parse(raw);
+    } else {
+      recordsCache = [];
     }
   } catch (err) {
     console.error('Error cargando fiscal_records.json:', err);
@@ -51,6 +57,8 @@ function loadFromDisk(): void {
     if (fs.existsSync(SUBMISSIONS_FILE)) {
       const raw = fs.readFileSync(SUBMISSIONS_FILE, 'utf-8');
       submissionsCache = JSON.parse(raw);
+    } else {
+      submissionsCache = [];
     }
   } catch (err) {
     console.error('Error cargando fiscal_submissions.json:', err);
@@ -61,6 +69,8 @@ function loadFromDisk(): void {
     if (fs.existsSync(EVENTS_FILE)) {
       const raw = fs.readFileSync(EVENTS_FILE, 'utf-8');
       eventsCache = JSON.parse(raw);
+    } else {
+      eventsCache = [];
     }
   } catch (err) {
     console.error('Error cargando fiscal_events.json:', err);
@@ -99,10 +109,60 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Guarda un FiscalRecord en la custodia inmutable de backend tras verificar su integridad.
+   * Cerrojo a nivel de proceso/sistema de ficheros para serializar emisiones concurrentes.
+   */
+  public static async acquireProcessLock(obligadoTributarioId: string, timeoutMs = 8000): Promise<() => void> {
+    ensureDataDir();
+    const cleanId = obligadoTributarioId.replace(/[^a-zA-Z0-9_-]/g, '_');
+    const lockPath = path.join(LOCKS_DIR, `obligado_${cleanId}.lock`);
+    const startTime = Date.now();
+
+    while (Date.now() - startTime < timeoutMs) {
+      try {
+        const fd = fs.openSync(lockPath, 'wx');
+        fs.writeSync(fd, `${process.pid}:${Date.now()}`);
+        fs.closeSync(fd);
+
+        // Retornar función de liberación del cerrojo
+        return () => {
+          try {
+            if (fs.existsSync(lockPath)) {
+              fs.unlinkSync(lockPath);
+            }
+          } catch {}
+        };
+      } catch (err: any) {
+        if (err.code === 'EEXIST') {
+          // El lock ya existe: verificar si es un lock huérfano (> 15 segundos)
+          try {
+            const stat = fs.statSync(lockPath);
+            if (Date.now() - stat.mtimeMs > 15000) {
+              fs.unlinkSync(lockPath);
+              continue;
+            }
+          } catch {}
+          await new Promise(resolve => setTimeout(resolve, 30));
+        } else {
+          break;
+        }
+      }
+    }
+
+    // Fallback de contingencia si el timeout expira
+    return () => {
+      try {
+        if (fs.existsSync(lockPath)) fs.unlinkSync(lockPath);
+      } catch {}
+    };
+  }
+
+  /**
+   * Guarda un FiscalRecord en la custodia inmutable de backend tras verificar su integridad
+   * y garantizar la no-bifurcación de la cadena criptográfica SHA-256.
    */
   public static async saveFiscalRecord(record: FiscalRecord): Promise<void> {
     this.init();
+    loadFromDisk();
 
     if (!record || !record.id) {
       throw new Error('BackendFiscalCustody: Se requiere un FiscalRecord válido con identificador.');
@@ -124,32 +184,58 @@ export class BackendFiscalCustody {
       throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en la custodia fiscal.`);
     }
 
-    // 3. Persistir en custodia inmutable
+    // 3. Garantía absoluta de no bifurcación de la cadena por concurrencia
+    const latestInChain = this.getLatestFiscalRecord(record.obligadoTributarioId);
+    if (record.encadenamiento.primerRegistro) {
+      if (latestInChain) {
+        throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen ${recordsCache.filter(r => r.obligadoTributarioId === record.obligadoTributarioId).length} registros en custodia para el obligado ${record.obligadoTributarioId}.`);
+      }
+    } else {
+      if (!latestInChain) {
+        throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en custodia para el obligado ${record.obligadoTributarioId}.`);
+      }
+      if (record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
+        throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada. El hash del registro anterior no coincide con el último registro existente en la custodia fiscal.`);
+      }
+    }
+
+    // 4. Persistir en custodia inmutable
     recordsCache.push(Object.freeze(record));
     try {
       persistRecordsToDisk();
     } catch (err) {
       console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
+      throw err;
     }
   }
 
   /**
    * Obtiene el último registro fiscal sellado para un obligado tributario.
+   * Resuelve matemáticamente la cabeza/punta de la cadena criptográfica SHA-256.
    */
   public static getLatestFiscalRecord(obligadoTributarioId: string): FiscalRecord | null {
     this.init();
+    loadFromDisk();
     if (!obligadoTributarioId) return null;
 
     const matching = recordsCache.filter(r => r.obligadoTributarioId === obligadoTributarioId);
     if (matching.length === 0) return null;
+    if (matching.length === 1) return matching[0];
 
-    matching.sort((a, b) => {
-      const timeA = new Date(a.fechaHoraHusoGenRegistro).getTime();
-      const timeB = new Date(b.fechaHoraHusoGenRegistro).getTime();
-      return timeB - timeA;
-    });
+    // Encontrar el registro cuya huella no es predecesora de ningún otro registro en la cadena
+    const referencedPredecessors = new Set<string>();
+    for (const r of matching) {
+      if (r.encadenamiento.registroAnterior?.huella) {
+        referencedPredecessors.add(r.encadenamiento.registroAnterior.huella);
+      }
+    }
 
-    return matching[0];
+    const tips = matching.filter(r => !referencedPredecessors.has(r.huella.hash));
+    if (tips.length > 0) {
+      return tips[tips.length - 1];
+    }
+
+    return matching[matching.length - 1];
   }
 
   /**

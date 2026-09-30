@@ -22,6 +22,8 @@
  */
 
 import https from 'node:https';
+import fs from 'node:fs';
+import path from 'node:path';
 import {
   FiscalRecord,
   FiscalSubmission,
@@ -33,6 +35,7 @@ import { transitionSubmissionStatus, createFiscalSubmission } from './submission
 import { parseAeatXmlResponse, AeatParsedResponse } from './aeatResponseParser';
 import { MockAeatTransport, MockScenario } from './mockAeatTransport';
 import { AeatCertificateProvider } from './aeatCertificateProvider';
+import { validateAeatXmlAgainstXsd } from './aeatXsdValidatorNode';
 import {
   AEAT_OFFICIAL_ENDPOINTS,
   getAeatSoapEndpoint,
@@ -76,9 +79,41 @@ export interface FlowControlState {
   readonly nextAllowedSendTimestamp: number;
 }
 
+const FLOW_CONTROL_FILE = path.resolve(process.cwd(), 'data', 'aeat_flow_control.json');
+
 export class AeatFlowControlManager {
   private static flowStateByObligado: Map<string, FlowControlState> = new Map();
   private static activeLocks: Set<string> = new Set();
+  private static diskInitialized = false;
+
+  private static initFromDisk(): void {
+    if (this.diskInitialized || typeof window !== 'undefined') return;
+    try {
+      if (fs.existsSync(FLOW_CONTROL_FILE)) {
+        const raw = fs.readFileSync(FLOW_CONTROL_FILE, 'utf-8');
+        const parsed = JSON.parse(raw);
+        for (const [k, v] of Object.entries(parsed)) {
+          this.flowStateByObligado.set(k, v as FlowControlState);
+        }
+      }
+    } catch {}
+    this.diskInitialized = true;
+  }
+
+  private static persistToDisk(): void {
+    if (typeof window !== 'undefined') return;
+    try {
+      const dataDir = path.dirname(FLOW_CONTROL_FILE);
+      if (!fs.existsSync(dataDir)) {
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
+      const obj: Record<string, FlowControlState> = {};
+      for (const [k, v] of this.flowStateByObligado.entries()) {
+        obj[k] = v;
+      }
+      fs.writeFileSync(FLOW_CONTROL_FILE, JSON.stringify(obj, null, 2), 'utf-8');
+    } catch {}
+  }
 
   /**
    * Actualiza el control de flujo oficial a partir del <TiempoEsperaEnvio> devuelto por la AEAT.
@@ -88,6 +123,7 @@ export class AeatFlowControlManager {
     tiempoEsperaSegundos?: number,
     responseTimestampMs?: number
   ): FlowControlState {
+    this.initFromDisk();
     const timestamp = responseTimestampMs ?? Date.now();
     const waitSeconds = typeof tiempoEsperaSegundos === 'number' && !isNaN(tiempoEsperaSegundos)
       ? Math.max(0, tiempoEsperaSegundos)
@@ -101,6 +137,7 @@ export class AeatFlowControlManager {
     };
 
     this.flowStateByObligado.set(obligadoTributarioId, state);
+    this.persistToDisk();
     return state;
   }
 
@@ -108,6 +145,7 @@ export class AeatFlowControlManager {
    * Obtiene los segundos de espera oficiales vigentes según la última respuesta de la AEAT.
    */
   public static getCurrentFlowWaitSeconds(obligadoTributarioId: string): number {
+    this.initFromDisk();
     return this.flowStateByObligado.get(obligadoTributarioId)?.tiempoEsperaEnvioSegundos ?? DEFAULT_AEAT_TIEMPO_ESPERA_SEGUNDOS;
   }
 
@@ -115,6 +153,7 @@ export class AeatFlowControlManager {
    * Obtiene el timestamp en milisegundos más temprano en que la AEAT autoriza el próximo envío por tiempo.
    */
   public static getNextAllowedSendTimestamp(obligadoTributarioId: string): number {
+    this.initFromDisk();
     return this.flowStateByObligado.get(obligadoTributarioId)?.nextAllowedSendTimestamp ?? 0;
   }
 
@@ -122,6 +161,7 @@ export class AeatFlowControlManager {
    * Obtiene el estado completo de control de flujo para un obligado tributario.
    */
   public static getFlowState(obligadoTributarioId: string): FlowControlState | undefined {
+    this.initFromDisk();
     return this.flowStateByObligado.get(obligadoTributarioId);
   }
 
@@ -193,6 +233,12 @@ export class AeatFlowControlManager {
   public static reset(): void {
     this.flowStateByObligado.clear();
     this.activeLocks.clear();
+    this.diskInitialized = true;
+    try {
+      if (fs.existsSync(FLOW_CONTROL_FILE)) {
+        fs.unlinkSync(FLOW_CONTROL_FILE);
+      }
+    } catch {}
   }
 }
 
@@ -345,10 +391,30 @@ export async function executeAeatSubmission(params: {
     throw new Error('executeAeatSubmission: No se permite enviar un registro sin XML oficial sellado.');
   }
 
+  // Validación reglamentaria XSD previa al envío a AEAT (Fase 3.1.4)
+  const xsdReport = validateAeatXmlAgainstXsd(xmlParaEnvio);
+  if (!xsdReport.valid) {
+    createTransportFiscalEvent({
+      obligadoTributarioId: fiscalRecord.obligadoTributarioId,
+      tipo: 'ENVIO_AEAT_ERROR_TECNICO',
+      fiscalRecordId: fiscalRecord.id,
+      numeroFactura: fiscalRecord.factura.numeroFactura,
+      actor: options?.actor || { tipo: 'SYSTEM', nombre: 'AeatTransportService' },
+      descripcion: `Validación formal XSD previa al envío fallida: ${xsdReport.errors.join('; ')}`,
+      datos: { errors: xsdReport.errors }
+    });
+    throw new Error(`executeAeatSubmission: Validación formal XSD fallida previa al envío a AEAT: ${xsdReport.errors.join('; ')}`);
+  }
+
   // Comprobación previa de modo de transporte y credenciales mTLS (prohibido fallback silencioso)
   const configuredMode = options?.transportMode || process.env.AEAT_TRANSPORT_MODE;
   if (configuredMode === 'real' && !AeatCertificateProvider.hasCertificate()) {
     throw new Error('executeAeatSubmission: Modo real de transporte AEAT requerido (AEAT_TRANSPORT_MODE=real), pero no se han configurado credenciales de certificado mTLS válidas en el servidor. Fallback a mock estrictamente prohibido.');
+  }
+
+  const explicitMockInOptions = options?.transportMode === 'mock';
+  if (config.entornoAeat === 'produccion' && !AeatCertificateProvider.hasCertificate() && !explicitMockInOptions) {
+    throw new Error('executeAeatSubmission: En entorno de producción AEAT es estrictamente obligatorio disponer de certificado mTLS válido. Fallback a mock PROHIBIDO.');
   }
 
   const actor: FiscalActor = options?.actor || { tipo: 'SYSTEM', nombre: 'AeatTransportService' };

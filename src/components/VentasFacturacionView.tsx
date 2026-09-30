@@ -55,19 +55,7 @@ import {
   descargarLibroVeriFactuXml
 } from '../utils/verifactu';
 import { emitFiscalInvoice } from '../fiscal/emissionService';
-import {
-  executeAeatSubmission,
-  createRetrySubmission
-} from '../fiscal/aeatTransport';
-import {
-  createFiscalSubmission
-} from '../fiscal/submissionService';
-import {
-  createFiscalRecordFromInvoice
-} from '../fiscal/modelTransformers';
-import {
-  getFiscalRecordFromCloud
-} from '../utils/firebase';
+import { auth } from '../utils/firebase';
 
 interface VentasFacturacionViewProps {
   clientes: Cliente[];
@@ -155,38 +143,32 @@ export const VentasFacturacionView: React.FC<VentasFacturacionViewProps> = ({
     setEnviandoAeat(prev => ({ ...prev, [factura.id]: true }));
     try {
       const activeFiscalConfig = fiscalConfig || getDefaultFiscalConfig();
-      // 1. Recuperar o reconstruir de forma pura el FiscalRecord sellado sin mutaciones
-      let fiscalRecord = await getFiscalRecordFromCloud(factura.fiscalRecordId);
-      if (!fiscalRecord) {
-        fiscalRecord = createFiscalRecordFromInvoice(factura, activeFiscalConfig, null, {
-          hashActual: factura.hashActual || '0'.repeat(64),
-          fechaHoraSellado: factura.fechaHoraSellado || factura.creadoEn,
-          urlVeriFactu: factura.urlVeriFactu,
-          qrDataUri: factura.qrDataUri
-        });
-      }
+      let authHeaders: Record<string, string> = {};
+      try {
+        const token = await auth.currentUser?.getIdToken();
+        if (token) {
+          authHeaders['Authorization'] = `Bearer ${token}`;
+        }
+      } catch {}
 
-      // 2. Si existe sumisión previa en error técnico, reintentar con intento incrementado
-      const prevSubmission = submissionsByFactura[factura.id];
-      let submissionToExecute: FiscalSubmission;
-
-      if (prevSubmission && (prevSubmission.estado === 'FAILED_TECHNICAL' || prevSubmission.estado === 'RETRY_PENDING')) {
-        submissionToExecute = createRetrySubmission({
-          previousSubmission: prevSubmission,
-          fiscalRecord,
+      const res = await fetch('/api/fiscal/submit', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...authHeaders
+        },
+        body: JSON.stringify({
+          fiscalRecordId: factura.fiscalRecordId,
           config: activeFiscalConfig
-        });
-      } else {
-        submissionToExecute = createFiscalSubmission(fiscalRecord, activeFiscalConfig);
-      }
-
-      // 3. Ejecutar transporte oficial
-      const result = await executeAeatSubmission({
-        submission: submissionToExecute,
-        fiscalRecord,
-        config: activeFiscalConfig
+        })
       });
 
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => ({}));
+        throw new Error(errJson.error || errJson.message || `Error en remisión AEAT de backend (HTTP ${res.status})`);
+      }
+
+      const result = await res.json();
       setSubmissionsByFactura(prev => ({
         ...prev,
         [factura.id]: result.submission

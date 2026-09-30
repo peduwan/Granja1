@@ -71,3 +71,5 @@ export function validateXmlAgainstOfficialXsd(
     }
   }
 }
+
+export const validateAeatXmlAgainstXsd = validateXmlAgainstOfficialXsd;

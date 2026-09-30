@@ -466,7 +466,8 @@ await runTest('Outbox - Test E: Cambiar el estado de FiscalSubmission no altera 
   });
 
   const sub = createFiscalSubmission(record, config);
-  const updatedSub = transitionSubmissionStatus(sub, 'ACCEPTED', {
+  const sendingSub = transitionSubmissionStatus(sub, 'SENDING');
+  const updatedSub = transitionSubmissionStatus(sendingSub, 'ACCEPTED', {
     httpStatus: 200,
     codigoAeat: '0',
     descripcion: 'Aceptado con éxito por AEAT',

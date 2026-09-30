@@ -503,6 +503,11 @@ export function subscribeToFarmCloudData(
  * - Los errores de persistencia NO se silencian; deben propagarse al llamador para abortar la emisión.
  */
 export async function saveFiscalRecordToCloud(record: FiscalRecord): Promise<boolean> {
+  // Prohibición estricta de escritura directa desde el cliente del navegador (Fase 3.1.4)
+  if (typeof window !== 'undefined') {
+    throw new Error('VIOLACIÓN DE AUTORIDAD FISCAL: Los clientes web no pueden escribir directamente en /fiscal_records. La emisión y custodia residen exclusivamente en backend.');
+  }
+
   // 1. Validaciones estrictas de integridad y custodia fiscal (Fase 1.3)
   if (!record.obligadoTributarioId || record.obligadoTributarioId.trim() === '' || record.obligadoTributarioId === 'ES_UNKNOWN') {
     throw new Error('saveFiscalRecordToCloud: obligadoTributarioId es obligatorio y no puede estar vacío ni ser ES_UNKNOWN.');
@@ -548,6 +553,9 @@ export async function getFiscalRecordFromCloud(recordId: string): Promise<Fiscal
  * Persiste un FiscalSubmission en la colección `/fiscal_submissions/{submissionId}`.
  */
 export async function saveFiscalSubmissionToCloud(submission: FiscalSubmission): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    throw new Error('VIOLACIÓN DE AUTORIDAD FISCAL: Los clientes web no pueden escribir directamente en /fiscal_submissions. El outbox es gestionado exclusivamente por el backend.');
+  }
   if (!submission.obligadoTributarioId || submission.obligadoTributarioId === 'ES_UNKNOWN' || submission.obligadoTributarioId.trim() === '') {
     throw new Error('saveFiscalSubmissionToCloud: obligadoTributarioId es obligatorio y no puede ser ES_UNKNOWN.');
   }
@@ -564,6 +572,9 @@ export async function saveFiscalSubmissionToCloud(submission: FiscalSubmission):
  * Registra un FiscalEvent inmutable en el libro de auditoría `/fiscal_events/{eventId}`.
  */
 export async function saveFiscalEventToCloud(event: FiscalEvent): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    throw new Error('VIOLACIÓN DE AUTORIDAD FISCAL: Los clientes web no pueden escribir directamente en /fiscal_events. El libro de auditoría es gestionado exclusivamente por el backend.');
+  }
   if (!event.obligadoTributarioId || event.obligadoTributarioId === 'ES_UNKNOWN' || event.obligadoTributarioId.trim() === '') {
     throw new Error('saveFiscalEventToCloud: obligadoTributarioId es obligatorio y no puede ser ES_UNKNOWN.');
   }
@@ -579,6 +590,9 @@ export async function saveFiscalEventToCloud(event: FiscalEvent): Promise<boolea
  * Las nuevas emisiones persisten exclusivamente en /fiscal_records/{recordId} vía emitFiscalInvoice.
  */
 export async function migrateLegacyBillingRecord(registro: any): Promise<boolean> {
+  if (typeof window !== 'undefined') {
+    throw new Error('VIOLACIÓN DE AUTORIDAD FISCAL: Prohibida la escritura en /registros_facturacion desde clientes del navegador.');
+  }
   try {
     const regRef = doc(db, 'registros_facturacion', registro.id || `reg_${Date.now()}`);
     await setDoc(regRef, sanitizeForFirestore(registro));

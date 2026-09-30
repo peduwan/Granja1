@@ -142,11 +142,23 @@ export function getLastFiscalRecord(
 export async function emitFiscalInvoice(
   params: EmitFiscalInvoiceParams
 ): Promise<EmitFiscalInvoiceResult> {
-  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend
+  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend con autenticación
   if (typeof window !== 'undefined') {
+    let authHeaders: Record<string, string> = {};
+    try {
+      const { auth } = await import('../utils/firebase');
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+      }
+    } catch {}
+
     const res = await fetch('/api/fiscal/emit-invoice', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders
+      },
       body: JSON.stringify({
         invoiceDraft: params.invoiceDraft,
         fiscalConfig: params.fiscalConfig
@@ -154,7 +166,7 @@ export async function emitFiscalInvoice(
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `Error en emisión fiscal de backend: HTTP ${res.status}`);
+      throw new Error(errJson.error || errJson.details || `Error en emisión fiscal de backend: HTTP ${res.status}`);
     }
     const data = await res.json();
     return {
@@ -194,25 +206,39 @@ async function executeEmitFiscalInvoice(
 ): Promise<EmitFiscalInvoiceResult> {
   const { invoiceDraft, fiscalConfig, persistRecordFn } = params;
 
-  // 1. Obtener la huella anterior DENTRO de la sección serializada
-  // NUNCA de invoiceDraft.hashAnterior ni de invoiceDraft.hashActual
-  let previousRecord: FiscalRecordRef | FiscalRecord | null = null;
-  if (params.previousRecordRef !== undefined) {
-    previousRecord = params.previousRecordRef;
-  } else {
-    previousRecord = getLastFiscalRecord(obligadoTributarioId, {
-      candidateRefs: params.existingRecordRefs
-    });
-    if (!previousRecord && typeof window === 'undefined') {
-      try {
-        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-        const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
-        if (latestFromCustody) {
-          previousRecord = latestFromCustody;
-        }
-      } catch {}
-    }
+  let releaseProcessLock: (() => void) | null = null;
+  if (typeof window === 'undefined') {
+    try {
+      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+      releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
+    } catch {}
   }
+
+  try {
+    // 1. Obtener la huella anterior DENTRO de la sección serializada
+    // NUNCA de invoiceDraft.hashAnterior ni de invoiceDraft.hashActual
+    let previousRecord: FiscalRecordRef | FiscalRecord | null = null;
+    if (params.previousRecordRef !== undefined) {
+      previousRecord = params.previousRecordRef;
+    } else {
+      if (typeof window === 'undefined') {
+        try {
+          const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+          const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+          previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
+            candidateRefs: params.existingRecordRefs
+          });
+        } catch {
+          previousRecord = getLastFiscalRecord(obligadoTributarioId, {
+            candidateRefs: params.existingRecordRefs
+          });
+        }
+      } else {
+        previousRecord = getLastFiscalRecord(obligadoTributarioId, {
+          candidateRefs: params.existingRecordRefs
+        });
+      }
+    }
 
   let hashAnterior = '';
   if (previousRecord) {
@@ -350,6 +376,11 @@ async function executeEmitFiscalInvoice(
     fiscalRecord,
     fiscalRecordRef
   };
+  } finally {
+    if (releaseProcessLock) {
+      releaseProcessLock();
+    }
+  }
 }
 
 export interface EmitFiscalAnulacionParams {
@@ -377,11 +408,23 @@ export interface EmitFiscalAnulacionResult {
 export async function emitFiscalAnulacion(
   params: EmitFiscalAnulacionParams
 ): Promise<EmitFiscalAnulacionResult> {
-  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend
+  // En entorno navegador, delegar estrictamente a la autoridad fiscal del backend con autenticación
   if (typeof window !== 'undefined') {
+    let authHeaders: Record<string, string> = {};
+    try {
+      const { auth } = await import('../utils/firebase');
+      const token = await auth.currentUser?.getIdToken();
+      if (token) {
+        authHeaders['Authorization'] = `Bearer ${token}`;
+      }
+    } catch {}
+
     const res = await fetch('/api/fiscal/emit-anulacion', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        ...authHeaders
+      },
       body: JSON.stringify({
         facturaAnulada: params.facturaAnulada,
         fiscalConfig: params.fiscalConfig,
@@ -390,7 +433,7 @@ export async function emitFiscalAnulacion(
     });
     if (!res.ok) {
       const errJson = await res.json().catch(() => ({}));
-      throw new Error(errJson.error || `Error en anulación fiscal de backend: HTTP ${res.status}`);
+      throw new Error(errJson.error || errJson.details || `Error en anulación fiscal de backend: HTTP ${res.status}`);
     }
     const data = await res.json();
     return {
@@ -424,23 +467,37 @@ async function executeEmitFiscalAnulacion(
 ): Promise<EmitFiscalAnulacionResult> {
   const { fiscalConfig, facturaAnulada, persistRecordFn } = params;
 
-  let previousRecord: FiscalRecordRef | FiscalRecord | null = null;
-  if (params.previousRecordRef !== undefined) {
-    previousRecord = params.previousRecordRef;
-  } else {
-    previousRecord = getLastFiscalRecord(obligadoTributarioId, {
-      candidateRefs: params.existingRecordRefs
-    });
-    if (!previousRecord && typeof window === 'undefined') {
-      try {
-        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-        const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
-        if (latestFromCustody) {
-          previousRecord = latestFromCustody;
-        }
-      } catch {}
-    }
+  let releaseProcessLock: (() => void) | null = null;
+  if (typeof window === 'undefined') {
+    try {
+      const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+      releaseProcessLock = await BackendFiscalCustody.acquireProcessLock(obligadoTributarioId);
+    } catch {}
   }
+
+  try {
+    let previousRecord: FiscalRecordRef | FiscalRecord | null = null;
+    if (params.previousRecordRef !== undefined) {
+      previousRecord = params.previousRecordRef;
+    } else {
+      if (typeof window === 'undefined') {
+        try {
+          const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+          const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+          previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
+            candidateRefs: params.existingRecordRefs
+          });
+        } catch {
+          previousRecord = getLastFiscalRecord(obligadoTributarioId, {
+            candidateRefs: params.existingRecordRefs
+          });
+        }
+      } else {
+        previousRecord = getLastFiscalRecord(obligadoTributarioId, {
+          candidateRefs: params.existingRecordRefs
+        });
+      }
+    }
 
   let hashAnterior = '';
   if (previousRecord) {
@@ -499,10 +556,15 @@ async function executeEmitFiscalAnulacion(
   const fiscalRecordRef = createFiscalRecordRef(fiscalRecord);
   registerEmittedFiscalRecordRef(obligadoTributarioId, fiscalRecordRef);
 
-  return {
-    fiscalRecord,
-    fiscalRecordRef
-  };
+    return {
+      fiscalRecord,
+      fiscalRecordRef
+    };
+  } finally {
+    if (releaseProcessLock) {
+      releaseProcessLock();
+    }
+  }
 }
 
 /**

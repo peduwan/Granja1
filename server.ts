@@ -11,6 +11,11 @@ import { emitFiscalInvoice, emitFiscalAnulacion } from "./src/fiscal/emissionSer
 import { BackendFiscalCustody } from "./src/fiscal/backendCustodyRepository";
 import { verifyFiscalRecordHash } from "./src/fiscal/hashService";
 import { createFiscalSubmission } from "./src/fiscal/submissionService";
+import {
+  requireFiscalAuthMiddleware,
+  assertObligadoAuthorized,
+  FiscalAuthenticatedRequest
+} from "./src/fiscal/backendAuth";
 
 dotenv.config();
 
@@ -827,25 +832,39 @@ INSTRUCCIONES CLAVE:
 // --- ENDPOINTS FASE 3.1.3: AUTORIDAD FISCAL, CUSTODIA Y TRANSPORTE AEAT ---
 
 // 1. Emisión de Factura Fiscal con autoridad exclusiva en backend
-app.post("/api/fiscal/emit-invoice", async (req, res) => {
+app.post("/api/fiscal/emit-invoice", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
     const { invoiceDraft, fiscalConfig } = req.body;
     if (!invoiceDraft || !fiscalConfig) {
       return res.status(400).json({ error: "Faltan datos obligatorios: invoiceDraft y fiscalConfig son requeridos." });
     }
 
-    const nif = (fiscalConfig.nifEmisor || fiscalConfig.obligadoTributarioId || "").trim().toUpperCase();
-    if (!nif || nif === 'ES_UNKNOWN' || nif === 'B12345678') {
+    const rawNif = (fiscalConfig.nifEmisor || fiscalConfig.obligadoTributarioId || "").trim().toUpperCase();
+    if (!rawNif || rawNif === 'ES_UNKNOWN' || rawNif === 'B12345678') {
       return res.status(400).json({ error: "NIF de emisor obligatorio y válido requerido (prohibido vacío, B12345678 o ES_UNKNOWN)." });
+    }
+
+    // Validación de identidad y autorización estricta del obligado tributario
+    let verifiedObligado = '';
+    try {
+      verifiedObligado = assertObligadoAuthorized(req.fiscalUser!, rawNif);
+    } catch (authErr: any) {
+      return res.status(authErr.statusCode || 403).json({ error: authErr.message });
     }
 
     if (!invoiceDraft.numeroFactura || !invoiceDraft.fecha) {
       return res.status(400).json({ error: "numeroFactura y fecha de expedición son obligatorios." });
     }
 
+    const sanitizedConfig = {
+      ...fiscalConfig,
+      nifEmisor: verifiedObligado,
+      obligadoTributarioId: verifiedObligado
+    };
+
     const result = await emitFiscalInvoice({
       invoiceDraft,
-      fiscalConfig,
+      fiscalConfig: sanitizedConfig,
       persistRecordFn: async (record) => {
         await BackendFiscalCustody.saveFiscalRecord(record);
       }
@@ -864,22 +883,35 @@ app.post("/api/fiscal/emit-invoice", async (req, res) => {
 });
 
 // 2. Emisión de Anulación Fiscal con autoridad exclusiva en backend
-app.post("/api/fiscal/emit-anulacion", async (req, res) => {
+app.post("/api/fiscal/emit-anulacion", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
     const { facturaAnulada, fiscalConfig, obligadoTributarioId } = req.body;
     if (!facturaAnulada || !fiscalConfig) {
       return res.status(400).json({ error: "Faltan datos obligatorios: facturaAnulada y fiscalConfig son requeridos." });
     }
 
-    const obligadoId = (obligadoTributarioId || fiscalConfig.obligadoTributarioId || fiscalConfig.nifEmisor || "").trim().toUpperCase();
-    if (!obligadoId || obligadoId === 'ES_UNKNOWN') {
+    const rawObligado = (obligadoTributarioId || fiscalConfig.obligadoTributarioId || fiscalConfig.nifEmisor || "").trim().toUpperCase();
+    if (!rawObligado || rawObligado === 'ES_UNKNOWN') {
       return res.status(400).json({ error: "obligadoTributarioId obligatorio y no puede ser ES_UNKNOWN." });
     }
 
+    let verifiedObligado = '';
+    try {
+      verifiedObligado = assertObligadoAuthorized(req.fiscalUser!, rawObligado);
+    } catch (authErr: any) {
+      return res.status(authErr.statusCode || 403).json({ error: authErr.message });
+    }
+
+    const sanitizedConfig = {
+      ...fiscalConfig,
+      nifEmisor: verifiedObligado,
+      obligadoTributarioId: verifiedObligado
+    };
+
     const result = await emitFiscalAnulacion({
       facturaAnulada,
-      fiscalConfig,
-      obligadoTributarioId: obligadoId,
+      fiscalConfig: sanitizedConfig,
+      obligadoTributarioId: verifiedObligado,
       persistRecordFn: async (record) => {
         await BackendFiscalCustody.saveFiscalRecord(record);
       }
@@ -897,13 +929,13 @@ app.post("/api/fiscal/emit-anulacion", async (req, res) => {
 });
 
 // 3. Consulta de registros en custodia de backend
-app.get("/api/fiscal/records", (req, res) => {
+app.get("/api/fiscal/records", requireFiscalAuthMiddleware, (req: FiscalAuthenticatedRequest, res) => {
   const obligado = typeof req.query.obligado === 'string' ? req.query.obligado : undefined;
   const records = BackendFiscalCustody.getAllFiscalRecords(obligado);
   res.json({ records, count: records.length });
 });
 
-app.get("/api/fiscal/records/:id", (req, res) => {
+app.get("/api/fiscal/records/:id", requireFiscalAuthMiddleware, (req: FiscalAuthenticatedRequest, res) => {
   const record = BackendFiscalCustody.getFiscalRecordById(req.params.id);
   if (!record) {
     return res.status(404).json({ error: `FiscalRecord '${req.params.id}' no encontrado en custodia de backend.` });
@@ -921,7 +953,7 @@ app.get("/api/fiscal/cert-status", (_req, res) => {
 });
 
 // 5. Remisión a AEAT con verificación criptográfica estricta y cerrojo de concurrencia
-app.post("/api/fiscal/submit", async (req, res) => {
+app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
     const { submission, fiscalRecord, config, options, fiscalRecordId } = req.body;
 
@@ -932,6 +964,13 @@ app.post("/api/fiscal/submit", async (req, res) => {
 
     if (!recordToSubmit) {
       return res.status(400).json({ error: "Faltan datos obligatorios: fiscalRecord o fiscalRecordId son requeridos." });
+    }
+
+    // Validar autorización del obligado para el usuario autenticado
+    try {
+      assertObligadoAuthorized(req.fiscalUser!, recordToSubmit.obligadoTributarioId);
+    } catch (authErr: any) {
+      return res.status(authErr.statusCode || 403).json({ error: authErr.message });
     }
 
     // Verificación criptográfica obligatoria en backend de la huella SHA-256
@@ -1048,10 +1087,12 @@ app.post("/api/verifactu/procesar-factura", async (req, res) => {
 // Vite middleware para dev y serving para producción
 async function start() {
   if (process.env.NODE_ENV !== "production") {
+    const isHmrDisabled = process.env.DISABLE_HMR === 'true';
     const vite = await createViteServer({
       server: {
         middlewareMode: true,
-        hmr: process.env.DISABLE_HMR !== 'true'
+        hmr: !isHmrDisabled,
+        watch: isHmrDisabled ? null : {}
       },
       appType: "spa",
     });
@@ -1069,4 +1110,7 @@ async function start() {
   });
 }
 
-start();
+start().catch((err) => {
+  console.error("Error fatal iniciando el servidor Avícola:", err);
+  process.exit(1);
+});

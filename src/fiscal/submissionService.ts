@@ -125,6 +125,16 @@ export function createFiscalSubmission(
   return frozenSubmission;
 }
 
+export const ALLOWED_SUBMISSION_TRANSITIONS: Record<FiscalSubmissionStatus, readonly FiscalSubmissionStatus[]> = {
+  PENDING: ['SENDING'],
+  SENDING: ['ACCEPTED', 'ACCEPTED_WITH_ERRORS', 'REJECTED', 'FAILED_TECHNICAL'],
+  FAILED_TECHNICAL: ['RETRY_PENDING'],
+  RETRY_PENDING: ['SENDING'],
+  ACCEPTED: [], // Estado terminal
+  ACCEPTED_WITH_ERRORS: [], // Estado terminal
+  REJECTED: [] // Estado terminal tributario
+};
+
 /**
  * Efectúa una transición de estado en una FiscalSubmission existente produciendo
  * una nueva instancia inmutable, sin tocar en ningún caso el FiscalRecord sellado.
@@ -136,6 +146,12 @@ export function transitionSubmissionStatus(
 ): FiscalSubmission {
   if (!submission || typeof submission !== 'object') {
     throw new Error('transitionSubmissionStatus: Se requiere una FiscalSubmission válida.');
+  }
+
+  // Validación estricta de la máquina de estados
+  const allowed = ALLOWED_SUBMISSION_TRANSITIONS[submission.estado] || [];
+  if (!allowed.includes(newStatus)) {
+    throw new Error(`transitionSubmissionStatus: Transición de estado ilegal en FiscalSubmission. De '${submission.estado}' a '${newStatus}' no está permitida por la máquina de estados.`);
   }
 
   const ahora = new Date().toISOString();
