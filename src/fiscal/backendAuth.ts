@@ -34,28 +34,21 @@ export interface FiscalAuthenticatedRequest extends Request {
   fiscalUser?: AuthenticatedFiscalUser;
 }
 
-// Almacén en memoria de tokens de testing autorizados (para mocks rápidos de tests unitarios)
-const testTokensRegistry = new Map<string, AuthenticatedFiscalUser>();
-
-// Almacén en memoria de claves públicas de test (para probar firmas criptográficas RS256 en suites de tests)
+// Almacén en memoria de claves públicas de test (para probar firmas criptográficas RS256 en suites de tests offline)
 const testPublicKeysRegistry = new Map<string, string>();
 
 /**
- * Registra un token de testing en memoria (exclusivamente para suites de pruebas unitarias/integración).
- */
-export function registerTestAuthToken(token: string, user: AuthenticatedFiscalUser): void {
-  testTokensRegistry.set(token, user);
-}
-
-/**
- * Registra una clave pública de test para validación criptográfica de tokens RS256 en suites de tests offline.
+ * Registra una clave pública de test para validación criptográfica estricta de tokens RS256 en suites de tests.
+ * En producción (NODE_ENV=production) está estrictamente bloqueado para impedir cualquier bypass.
  */
 export function registerTestPublicKey(kid: string, publicKeyPem: string): void {
+  if (process.env.NODE_ENV === 'production') {
+    throw new Error('VIOLACIÓN DE SEGURIDAD: Prohibido registrar claves públicas de test en entorno de producción.');
+  }
   testPublicKeysRegistry.set(kid, publicKeyPem);
 }
 
 export function clearTestAuthTokens(): void {
-  testTokensRegistry.clear();
   testPublicKeysRegistry.clear();
 }
 
@@ -132,12 +125,7 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error('Token de autenticación vacío o no proporcionado.');
   }
 
-  // 1. Comprobación en registro de tokens de prueba autorizados
-  if (testTokensRegistry.has(token)) {
-    return testTokensRegistry.get(token)!;
-  }
-
-  // 2. Parseo y verificación estructural del JWT (header.payload.signature)
+  // 1. Parseo y verificación estructural del JWT (header.payload.signature)
   const parts = token.split('.');
   if (parts.length !== 3) {
     throw new Error('Formato de token de autenticación inválido. Se requiere un JWT válido de 3 partes.');
@@ -159,7 +147,7 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error('Carga útil del token de autenticación malformada.');
   }
 
-  // 3. Verificación formal de cabecera criptográfica
+  // 2. Verificación formal de cabecera criptográfica
   if (!header || header.alg !== 'RS256') {
     throw new Error(`Algoritmo criptográfico de token no permitido ('${header?.alg}'). Solo se admite RS256.`);
   }
@@ -169,8 +157,9 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error("El token de autenticación no especifica el identificador de clave pública ('kid').");
   }
 
-  // 4. Verificación criptográfica estricta de la firma digital (RS256)
-  let publicKeyPem: string | undefined = testPublicKeysRegistry.get(kid);
+  // 3. Verificación criptográfica estricta de la firma digital (RS256)
+  const isProduction = process.env.NODE_ENV === 'production';
+  let publicKeyPem: string | undefined = !isProduction ? testPublicKeysRegistry.get(kid) : undefined;
 
   if (!publicKeyPem) {
     let googleCerts = await getGooglePublicCerts(false);
@@ -199,7 +188,7 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error(`Fallo en la verificación criptográfica de la firma del token: ${cryptoErr.message || 'Firma alterada o no válida'}`);
   }
 
-  // 5. Verificación de claims canónicos del Firebase ID Token
+  // 4. Verificación de claims canónicos del Firebase ID Token (RFC 7519 / Especificaciones Oficiales Firebase)
   const nowSeconds = Math.floor(Date.now() / 1000);
   const clockSkewAllowance = 10; // 10 segundos de holgura por desviación horaria
 
@@ -207,8 +196,12 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error('El token de autenticación ha expirado.');
   }
 
-  if (payload.iat && typeof payload.iat === 'number' && payload.iat > (nowSeconds + clockSkewAllowance)) {
-    throw new Error('El token de autenticación fue emitido en el futuro.');
+  if (typeof payload.iat !== 'number' || payload.iat > (nowSeconds + clockSkewAllowance)) {
+    throw new Error("El token de autenticación no contiene 'iat' válido o fue emitido en el futuro.");
+  }
+
+  if (typeof payload.auth_time !== 'number' || payload.auth_time > (nowSeconds + clockSkewAllowance)) {
+    throw new Error("El token de autenticación no contiene 'auth_time' válido o es posterior al tiempo actual.");
   }
 
   const expectedProjectId = firebaseConfig.projectId;
@@ -235,12 +228,18 @@ export async function verifyFiscalToken(token: string): Promise<AuthenticatedFis
     throw new Error('El token de autenticación no contiene email o identificador de usuario válido.');
   }
 
-  const isOwner = email === ROOT_OWNER_EMAIL.toLowerCase();
+  // Autorización multi-nivel: soporte para Custom Claims (adminFiscal/isOwner/role) y email raíz
+  const isOwner = payload.adminFiscal === true ||
+                  payload.isOwner === true ||
+                  payload.role === 'admin' ||
+                  email === ROOT_OWNER_EMAIL.toLowerCase();
 
-  // Obligados autorizados para este usuario (por defecto el NIF asociado a la explotación, o todos si es propietario)
+  // Obligados autorizados para este usuario (sin NIF por defecto ni fallback ficticio)
   const authorizedObligados = isOwner
     ? ['*'] // Comodín para propietario (cualquier NIF legal de la granja)
-    : (payload.authorizedObligados || ['B88888888']);
+    : (Array.isArray(payload.authorizedObligados)
+        ? payload.authorizedObligados.filter((n: any) => typeof n === 'string' && isValidSpanishNifCifNie(n))
+        : []);
 
   return {
     uid,

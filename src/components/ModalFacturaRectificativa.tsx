@@ -10,7 +10,7 @@ import {
   FiscalConfiguration
 } from '../types';
 import { padNumero, formatearFechaES, calcularTotales, getDefaultFiscalConfig } from '../utils/storage';
-import { emitFiscalInvoice } from '../fiscal/emissionService';
+import { emitFiscalInvoiceViaBackend } from '../fiscal/fiscalApiClient';
 
 interface ModalFacturaRectificativaProps {
   facturaOriginal: Factura | null;
@@ -137,10 +137,9 @@ export const ModalFacturaRectificativa: React.FC<ModalFacturaRectificativaProps>
 
       const effectiveFiscalConfig: FiscalConfiguration = fiscalConfig || getDefaultFiscalConfig(config.cifEmpresa, config.nombreEmpresa);
 
-      const { invoice: nuevaFacturaRectificativa, fiscalRecordRef } = await emitFiscalInvoice({
+      const { invoice: nuevaFacturaRectificativa, fiscalRecordRef } = await emitFiscalInvoiceViaBackend({
         invoiceDraft,
-        fiscalConfig: effectiveFiscalConfig,
-        existingRecordRefs: fiscalRecordRefs
+        fiscalConfig: effectiveFiscalConfig
       });
 
       await onEmitirRectificativa(nuevaFacturaRectificativa, reingresarStock, fiscalRecordRef);

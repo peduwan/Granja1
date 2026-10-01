@@ -54,7 +54,7 @@ import {
   descargarXmlVeriFactu,
   descargarLibroVeriFactuXml
 } from '../utils/verifactu';
-import { emitFiscalInvoice } from '../fiscal/emissionService';
+import { emitFiscalInvoiceViaBackend } from '../fiscal/fiscalApiClient';
 import { auth } from '../utils/firebase';
 
 interface VentasFacturacionViewProps {
@@ -528,10 +528,9 @@ export const VentasFacturacionView: React.FC<VentasFacturacionViewProps> = ({
         esRectificativa: false
       };
 
-      const { invoice: nuevaFactura, fiscalRecordRef } = await emitFiscalInvoice({
+      const { invoice: nuevaFactura, fiscalRecordRef } = await emitFiscalInvoiceViaBackend({
         invoiceDraft,
-        fiscalConfig: effectiveFiscalConfig,
-        existingRecordRefs: fiscalRecordRefs
+        fiscalConfig: effectiveFiscalConfig
       });
 
       onAddFacturaDirecta(nuevaFactura, consumoEstuches, fiscalRecordRef);
@@ -597,10 +596,9 @@ export const VentasFacturacionView: React.FC<VentasFacturacionViewProps> = ({
       esRectificativa: false
     };
 
-    const { invoice: nuevaFactura, fiscalRecordRef } = await emitFiscalInvoice({
+    const { invoice: nuevaFactura, fiscalRecordRef } = await emitFiscalInvoiceViaBackend({
       invoiceDraft,
-      fiscalConfig: effectiveFiscalConfig,
-      existingRecordRefs: fiscalRecordRefs
+      fiscalConfig: effectiveFiscalConfig
     });
 
     onFacturarAlbaranes(nuevaFactura, albaranesSeleccionadosIds, fiscalRecordRef);

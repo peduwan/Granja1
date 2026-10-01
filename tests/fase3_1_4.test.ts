@@ -12,6 +12,7 @@ import assert from 'node:assert';
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import { spawnSync, spawn } from 'node:child_process';
 import firebaseConfig from '../firebase-applet-config.json';
 import { ROOT_OWNER_EMAIL } from '../src/utils/storage';
 import {
@@ -42,7 +43,6 @@ import {
   transitionSubmissionStatus
 } from '../src/fiscal/submissionService';
 import {
-  registerTestAuthToken,
   registerTestPublicKey,
   clearTestAuthTokens,
   verifyFiscalToken,
@@ -230,6 +230,8 @@ async function main() {
       email: 'operator@granja.com',
       email_verified: true,
       authorizedObligados: [NIF_EMISOR_LEGAL],
+      iat: Math.floor(Date.now() / 1000) - 10,
+      auth_time: Math.floor(Date.now() / 1000) - 10,
       exp: Math.floor(Date.now() / 1000) + 3600
     })).toString('base64url');
 
@@ -251,6 +253,8 @@ async function main() {
       sub: 'legit-operator-777',
       email: ROOT_OWNER_EMAIL, // SUPLANTACIÓN
       email_verified: true,
+      iat: Math.floor(Date.now() / 1000) - 10,
+      auth_time: Math.floor(Date.now() / 1000) - 10,
       exp: Math.floor(Date.now() / 1000) + 3600
     })).toString('base64url');
 

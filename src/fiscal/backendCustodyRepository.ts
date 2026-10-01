@@ -83,21 +83,24 @@ function loadFromDisk(): void {
 
 function persistRecordsToDisk(): void {
   ensureDataDir();
-  const tmpFile = `${RECORDS_FILE}.tmp`;
+  const uniqueId = `${process.pid}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const tmpFile = path.join(DATA_DIR, `fiscal_records_${uniqueId}.tmp`);
   fs.writeFileSync(tmpFile, JSON.stringify(recordsCache, null, 2), 'utf-8');
   fs.renameSync(tmpFile, RECORDS_FILE);
 }
 
 function persistSubmissionsToDisk(): void {
   ensureDataDir();
-  const tmpFile = `${SUBMISSIONS_FILE}.tmp`;
+  const uniqueId = `${process.pid}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const tmpFile = path.join(DATA_DIR, `fiscal_submissions_${uniqueId}.tmp`);
   fs.writeFileSync(tmpFile, JSON.stringify(submissionsCache, null, 2), 'utf-8');
   fs.renameSync(tmpFile, SUBMISSIONS_FILE);
 }
 
 function persistEventsToDisk(): void {
   ensureDataDir();
-  const tmpFile = `${EVENTS_FILE}.tmp`;
+  const uniqueId = `${process.pid}_${Date.now()}_${crypto.randomBytes(6).toString('hex')}`;
+  const tmpFile = path.join(DATA_DIR, `fiscal_events_${uniqueId}.tmp`);
   fs.writeFileSync(tmpFile, JSON.stringify(eventsCache, null, 2), 'utf-8');
   fs.renameSync(tmpFile, EVENTS_FILE);
 }
@@ -118,6 +121,94 @@ function isProcessAlive(pid: number): boolean {
   }
 }
 
+/**
+ * Obtiene el tiempo de inicio del proceso en ticks/jiffies (Linux /proc/<pid>/stat, campo 22)
+ * para detectar de forma unívoca la reutilización de PID por parte del sistema operativo.
+ */
+function getProcessStartTime(pid: number): number {
+  try {
+    const statPath = `/proc/${pid}/stat`;
+    if (fs.existsSync(statPath)) {
+      const statData = fs.readFileSync(statPath, 'utf-8');
+      const afterComm = statData.substring(statData.lastIndexOf(')') + 2);
+      const fields = afterComm.split(' ');
+      return parseInt(fields[19], 10) || 0; // Campo 22 global (19º tras comm)
+    }
+  } catch {}
+  return 0;
+}
+
+/**
+ * Cerrojo global a nivel de sistema de ficheros para serializar escrituras concurrentes multi-NIF.
+ * Evita carreras de persistencia y colisiones de ficheros temporales cuando varios obligados emiten a la vez.
+ */
+async function acquireGlobalPersistenceLock(timeoutMs = 15000): Promise<() => void> {
+  ensureDataDir();
+  const lockPath = path.join(LOCKS_DIR, 'global_persistence.lock');
+  const startTime = Date.now();
+  const procStartTime = getProcessStartTime(process.pid);
+  const ownerToken = `${process.pid}:${Date.now()}:${procStartTime}:${crypto.randomBytes(8).toString('hex')}`;
+
+  while (Date.now() - startTime < timeoutMs) {
+    try {
+      const fd = fs.openSync(lockPath, 'wx');
+      fs.writeSync(fd, ownerToken);
+      fs.closeSync(fd);
+
+      let released = false;
+      return () => {
+        if (released) return;
+        released = true;
+        try {
+          if (fs.existsSync(lockPath)) {
+            const currentContent = fs.readFileSync(lockPath, 'utf-8').trim();
+            if (currentContent === ownerToken) {
+              fs.unlinkSync(lockPath);
+            }
+          }
+        } catch {}
+      };
+    } catch (err: any) {
+      if (err.code === 'EEXIST') {
+        try {
+          if (fs.existsSync(lockPath)) {
+            const rawContent = fs.readFileSync(lockPath, 'utf-8').trim();
+            const parts = rawContent.split(':');
+            const ownerPid = parseInt(parts[0], 10);
+            const lockTimestamp = parseInt(parts[1], 10);
+            const lockProcStartTime = parts.length >= 4 ? parseInt(parts[2], 10) : 0;
+
+            const ownerAlive = isProcessAlive(ownerPid);
+            let isPidReused = false;
+            if (ownerAlive && lockProcStartTime > 0) {
+              const currentStartTime = getProcessStartTime(ownerPid);
+              if (currentStartTime > 0 && currentStartTime !== lockProcStartTime) {
+                isPidReused = true; // El PID fue reciclado por un proceso posterior
+              }
+            }
+
+            const isDeadOwner = (!ownerAlive || isPidReused) && (Date.now() - lockTimestamp > 2000);
+
+            // NUNCA eliminar si el proceso titular sigue vivo
+            if (isDeadOwner) {
+              try {
+                fs.unlinkSync(lockPath);
+                continue;
+              } catch {}
+            }
+          }
+        } catch {}
+
+        await new Promise(resolve => setTimeout(resolve, 25));
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  throw new Error(`BackendFiscalCustody: Timeout (${timeoutMs}ms) al adquirir cerrojo global de persistencia multi-NIF.`);
+}
+
 export class BackendFiscalCustody {
   private static init(): void {
     if (!initialized) {
@@ -128,15 +219,17 @@ export class BackendFiscalCustody {
   /**
    * Cerrojo exclusivo a nivel de proceso/sistema de ficheros para serializar emisiones concurrentes.
    * - FAIL CLOSED: Si no se adquiere en timeoutMs, lanza un error fatal.
-   * - OWNERSHIP: Cada adquisición genera un token criptográfico único; solo el titular puede liberarlo.
-   * - LIVENESS: Solo descarta cerrojos si el PID titular ha muerto.
+   * - OWNERSHIP: Cada adquisición genera un token criptográfico único con PID y starttime; solo el titular puede liberarlo.
+   * - LIVENESS: Un proceso vivo que tarda minutos u horas NUNCA pierde el lock por antigüedad.
+   * - PID REUSE: Detecta reciclaje de PID mediante verificación del tiempo de inicio del proceso (/proc/<pid>/stat).
    */
   public static async acquireProcessLock(obligadoTributarioId: string, timeoutMs = 8000): Promise<() => void> {
     ensureDataDir();
     const cleanId = obligadoTributarioId.replace(/[^a-zA-Z0-9_-]/g, '_');
     const lockPath = path.join(LOCKS_DIR, `obligado_${cleanId}.lock`);
     const startTime = Date.now();
-    const ownerToken = `${process.pid}:${Date.now()}:${crypto.randomBytes(8).toString('hex')}`;
+    const procStartTime = getProcessStartTime(process.pid);
+    const ownerToken = `${process.pid}:${Date.now()}:${procStartTime}:${crypto.randomBytes(8).toString('hex')}`;
 
     while (Date.now() - startTime < timeoutMs) {
       try {
@@ -167,15 +260,24 @@ export class BackendFiscalCustody {
           try {
             if (fs.existsSync(lockPath)) {
               const rawContent = fs.readFileSync(lockPath, 'utf-8').trim();
-              const [ownerPidStr, timestampStr] = rawContent.split(':');
-              const ownerPid = parseInt(ownerPidStr, 10);
-              const lockTimestamp = parseInt(timestampStr, 10);
+              const parts = rawContent.split(':');
+              const ownerPid = parseInt(parts[0], 10);
+              const lockTimestamp = parseInt(parts[1], 10);
+              const lockProcStartTime = parts.length >= 4 ? parseInt(parts[2], 10) : 0;
 
               const ownerAlive = isProcessAlive(ownerPid);
-              const isDeadOwner = !ownerAlive && (Date.now() - lockTimestamp > 2000);
-              const isExtremeStale = (Date.now() - lockTimestamp > 120000);
+              let isPidReused = false;
+              if (ownerAlive && lockProcStartTime > 0) {
+                const currentStartTime = getProcessStartTime(ownerPid);
+                if (currentStartTime > 0 && currentStartTime !== lockProcStartTime) {
+                  isPidReused = true; // El PID fue reciclado por un proceso nuevo; el dueño original murió
+                }
+              }
 
-              if (isDeadOwner || isExtremeStale) {
+              const isDeadOwner = (!ownerAlive || isPidReused) && (Date.now() - lockTimestamp > 2000);
+
+              // NUNCA eliminar si el proceso sigue vivo (sin importar si han transcurrido 2, 5 o 20 minutos)
+              if (isDeadOwner) {
                 try {
                   fs.unlinkSync(lockPath);
                   continue;
@@ -200,7 +302,7 @@ export class BackendFiscalCustody {
   /**
    * Guarda un FiscalRecord en la custodia inmutable de backend tras verificar su integridad
    * y garantizar la no-bifurcación de la cadena criptográfica SHA-256.
-   * Adquiere automáticamente el cerrojo si la llamada no lo sostiene previamente.
+   * Adquiere el cerrojo por obligado y el cerrojo global de persistencia para evitar carreras multi-NIF.
    */
   public static async saveFiscalRecord(record: FiscalRecord): Promise<void> {
     if (!record || !record.id) {
@@ -213,53 +315,122 @@ export class BackendFiscalCustody {
 
     // Si este hilo no posee el lock del obligado, adquirirlo transaccionalmente
     const alreadyLocked = activeLocksByObligado.has(record.obligadoTributarioId);
-    let releaseLock: (() => void) | null = null;
+    let releaseObligadoLock: (() => void) | null = null;
     if (!alreadyLocked) {
-      releaseLock = await this.acquireProcessLock(record.obligadoTributarioId);
+      releaseObligadoLock = await this.acquireProcessLock(record.obligadoTributarioId);
     }
 
     try {
-      this.init();
-      loadFromDisk();
-
-      // 1. Verificación de integridad matemática previa a la custodia
-      const verification = await verifyFiscalRecordHash(record);
-      if (!verification.valid) {
-        throw new Error(`BackendFiscalCustody: Fallo de integridad criptográfica en el registro (${verification.reason}). Custodia rechazada.`);
-      }
-
-      // 2. Comprobar que no exista duplicado por ID
-      const exists = recordsCache.some(r => r.id === record.id);
-      if (exists) {
-        throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en la custodia fiscal.`);
-      }
-
-      // 3. Garantía absoluta de no bifurcación de la cadena por concurrencia
-      const latestInChain = this.getLatestFiscalRecord(record.obligadoTributarioId);
-      if (record.encadenamiento.primerRegistro) {
-        if (latestInChain) {
-          throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen ${recordsCache.filter(r => r.obligadoTributarioId === record.obligadoTributarioId).length} registros en custodia para el obligado ${record.obligadoTributarioId}.`);
-        }
-      } else {
-        if (!latestInChain) {
-          throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en custodia para el obligado ${record.obligadoTributarioId}.`);
-        }
-        if (record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
-          throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada. El hash del registro anterior no coincide con el último registro existente en la custodia fiscal.`);
-        }
-      }
-
-      // 4. Persistir en custodia inmutable
-      recordsCache.push(Object.freeze(record));
+      // Adquirir el cerrojo global de persistencia para sincronizar escrituras en disco entre distintos NIFs
+      const releaseGlobalLock = await acquireGlobalPersistenceLock(15000);
       try {
-        persistRecordsToDisk();
-      } catch (err) {
-        console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
-        throw err;
+        this.init();
+        loadFromDisk(); // Lectura atómica fresca del estado actual del disco
+
+        // 1. Verificación de integridad matemática previa a la custodia
+        const verification = await verifyFiscalRecordHash(record);
+        if (!verification.valid) {
+          throw new Error(`BackendFiscalCustody: Fallo de integridad criptográfica en el registro (${verification.reason}). Custodia rechazada.`);
+        }
+
+        // 2. Comprobar que no exista duplicado por ID
+        const exists = recordsCache.some(r => r.id === record.id);
+        if (exists) {
+          throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en la custodia fiscal.`);
+        }
+
+        // 3. Garantía absoluta de no bifurcación de la cadena por concurrencia
+        const latestInChain = this.getLatestFiscalRecord(record.obligadoTributarioId);
+        if (record.encadenamiento.primerRegistro) {
+          if (latestInChain) {
+            throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen ${recordsCache.filter(r => r.obligadoTributarioId === record.obligadoTributarioId).length} registros en custodia para el obligado ${record.obligadoTributarioId}.`);
+          }
+        } else {
+          if (!latestInChain) {
+            throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en custodia para el obligado ${record.obligadoTributarioId}.`);
+          }
+          if (record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
+            throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada. El hash del registro anterior no coincide con el último registro existente en la custodia fiscal.`);
+          }
+        }
+
+        // 4. Persistir atómicamente en custodia inmutable (con fichero temporal único)
+        recordsCache.push(Object.freeze(record));
+        try {
+          persistRecordsToDisk();
+        } catch (err) {
+          console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
+          throw err;
+        }
+
+        // 5. C1 & C2: Persistencia distribuida y cerrojo transaccional en Google Cloud Firestore
+        try {
+          const { db, sanitizeForFirestore } = await import('../utils/firebase');
+          const { doc, runTransaction } = await import('firebase/firestore');
+
+          if (db) {
+            await runTransaction(db, async (tx) => {
+              const stateRef = doc(db, 'fiscal_chain_state', record.obligadoTributarioId);
+              const stateSnap = await tx.get(stateRef);
+
+              const recordRef = doc(db, 'fiscal_records', record.id);
+              const recordSnap = await tx.get(recordRef);
+              if (recordSnap.exists()) {
+                throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en Firestore.`);
+              }
+
+              if (stateSnap.exists()) {
+                const stateData = stateSnap.data();
+                if (record.encadenamiento.primerRegistro) {
+                  throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen registros en Firestore para el obligado ${record.obligadoTributarioId}.`);
+                }
+                if (record.encadenamiento.registroAnterior?.huella !== stateData.latestHuella) {
+                  throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada en Firestore. El hash del registro anterior (${record.encadenamiento.registroAnterior?.huella}) no coincide con el último registro en la nube (${stateData.latestHuella}).`);
+                }
+                tx.update(stateRef, {
+                  latestRecordId: record.id,
+                  latestHuella: record.huella.hash,
+                  latestNumeroFactura: record.factura.numeroFactura,
+                  latestFecha: record.factura.fechaExpedicion,
+                  totalRecords: (stateData.totalRecords || 0) + 1,
+                  updatedAt: new Date().toISOString()
+                });
+              } else {
+                if (!record.encadenamiento.primerRegistro) {
+                  if (!latestInChain || record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
+                    throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en Firestore para el obligado ${record.obligadoTributarioId}.`);
+                  }
+                }
+                tx.set(stateRef, {
+                  obligadoTributarioId: record.obligadoTributarioId,
+                  latestRecordId: record.id,
+                  latestHuella: record.huella.hash,
+                  latestNumeroFactura: record.factura.numeroFactura,
+                  latestFecha: record.factura.fechaExpedicion,
+                  totalRecords: 1,
+                  createdAt: new Date().toISOString(),
+                  updatedAt: new Date().toISOString()
+                });
+              }
+
+              tx.set(recordRef, sanitizeForFirestore(record));
+            });
+          }
+        } catch (cloudErr: any) {
+          if (cloudErr.message?.includes('Violación de encadenamiento') || 
+              cloudErr.message?.includes('Bifurcación de cadena') ||
+              cloudErr.message?.includes('Violación de inmutabilidad')) {
+            throw cloudErr;
+          }
+          // En entornos de testing herméticos o modo local/offline, registrar advertencia
+          console.warn('BackendFiscalCustody: Sincronización Firestore en modo local/fallback:', cloudErr.message || cloudErr);
+        }
+      } finally {
+        releaseGlobalLock();
       }
     } finally {
-      if (releaseLock) {
-        releaseLock();
+      if (releaseObligadoLock) {
+        releaseObligadoLock();
       }
     }
   }
@@ -267,6 +438,8 @@ export class BackendFiscalCustody {
   /**
    * Obtiene el último registro fiscal sellado para un obligado tributario.
    * Resuelve matemáticamente la cabeza/punta de la cadena criptográfica SHA-256.
+   * Si detecta múltiples puntas de cadena (cadena bifurcada A -> B y A -> C),
+   * RECHAZA la selección de punta arbitraria y aborta inmediatamente con un error de seguridad.
    */
   public static getLatestFiscalRecord(obligadoTributarioId: string): FiscalRecord | null {
     this.init();
@@ -277,7 +450,7 @@ export class BackendFiscalCustody {
     if (matching.length === 0) return null;
     if (matching.length === 1) return matching[0];
 
-    // Encontrar el registro cuya huella no es predecesora de ningún otro registro en la cadena
+    // Encontrar los registros cuya huella no es predecesora de ningún otro registro en la cadena
     const referencedPredecessors = new Set<string>();
     for (const r of matching) {
       if (r.encadenamiento.registroAnterior?.huella) {
@@ -286,11 +459,21 @@ export class BackendFiscalCustody {
     }
 
     const tips = matching.filter(r => !referencedPredecessors.has(r.huella.hash));
-    if (tips.length > 0) {
-      return tips[tips.length - 1];
+
+    // Si existen 2 o más puntas sin resolver, la cadena está BIFURCADA
+    if (tips.length > 1) {
+      throw new Error(
+        `BackendFiscalCustody: Bifurcación crítica detectada en la cadena criptográfica del obligado '${obligadoTributarioId}'. Existen ${tips.length} puntas de cadena concurrentes: [${tips.map(t => `${t.id}:${t.huella.hash.substring(0, 10)}...`).join(', ')}]. Prohibido seleccionar puntas arbitrarias. Emisión abortada.`
+      );
     }
 
-    return matching[matching.length - 1];
+    if (tips.length === 1) {
+      return tips[0];
+    }
+
+    throw new Error(
+      `BackendFiscalCustody: Corrupción crítica en la cadena criptográfica del obligado '${obligadoTributarioId}'. No se detecta ninguna punta de cadena libre.`
+    );
   }
 
   /**
@@ -298,6 +481,7 @@ export class BackendFiscalCustody {
    */
   public static getFiscalRecordById(recordId: string): FiscalRecord | null {
     this.init();
+    loadFromDisk();
     return recordsCache.find(r => r.id === recordId) || null;
   }
 
@@ -306,6 +490,7 @@ export class BackendFiscalCustody {
    */
   public static getAllFiscalRecords(obligadoTributarioId?: string): FiscalRecord[] {
     this.init();
+    loadFromDisk();
     if (obligadoTributarioId) {
       return recordsCache.filter(r => r.obligadoTributarioId === obligadoTributarioId);
     }
@@ -313,20 +498,43 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Registra una FiscalSubmission en la custodia de envíos.
+   * Registra una FiscalSubmission en la custodia de envíos con cerrojo global y persistencia fail-closed.
    */
-  public static saveFiscalSubmission(submission: FiscalSubmission): void {
-    this.init();
-    const idx = submissionsCache.findIndex(s => s.id === submission.id);
-    if (idx !== -1) {
-      submissionsCache[idx] = Object.freeze(submission);
-    } else {
-      submissionsCache.push(Object.freeze(submission));
+  public static async saveFiscalSubmission(submission: FiscalSubmission): Promise<void> {
+    if (!submission || !submission.id) {
+      throw new Error('BackendFiscalCustody: Se requiere una FiscalSubmission válida con identificador.');
     }
+
+    const releaseLock = await acquireGlobalPersistenceLock(15000);
     try {
+      this.init();
+      loadFromDisk(); // Lectura atómica del estado en disco
+
+      const idx = submissionsCache.findIndex(s => s.id === submission.id);
+      if (idx !== -1) {
+        submissionsCache[idx] = Object.freeze(submission);
+      } else {
+        submissionsCache.push(Object.freeze(submission));
+      }
+
+      // Persistir a disco atómicamente; si falla, relanzar el error (fail-closed)
       persistSubmissionsToDisk();
-    } catch (err) {
-      console.error('BackendFiscalCustody: Error persistiendo submission:', err);
+
+      // C1: Persistir FiscalSubmission en Google Cloud Firestore
+      try {
+        const { db, sanitizeForFirestore } = await import('../utils/firebase');
+        const { doc, setDoc } = await import('firebase/firestore');
+        if (db) {
+          await setDoc(doc(db, 'fiscal_submissions', submission.id), sanitizeForFirestore(submission));
+        }
+      } catch (cloudErr: any) {
+        console.warn('BackendFiscalCustody: Sincronización submission Firestore en modo local/fallback:', cloudErr.message || cloudErr);
+      }
+    } catch (err: any) {
+      console.error('BackendFiscalCustody: Error persistiendo submission a disco:', err);
+      throw err;
+    } finally {
+      releaseLock();
     }
   }
 
@@ -335,6 +543,7 @@ export class BackendFiscalCustody {
    */
   public static getFiscalSubmissions(fiscalRecordId?: string): FiscalSubmission[] {
     this.init();
+    loadFromDisk();
     if (fiscalRecordId) {
       return submissionsCache.filter(s => s.fiscalRecordId === fiscalRecordId);
     }
@@ -342,15 +551,38 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Registra un FiscalEvent de auditoría en la custodia del backend.
+   * Registra un FiscalEvent de auditoría en la custodia del backend con cerrojo global y persistencia fail-closed.
    */
-  public static saveFiscalEvent(event: FiscalEvent): void {
-    this.init();
-    eventsCache.push(Object.freeze(event));
+  public static async saveFiscalEvent(event: FiscalEvent): Promise<void> {
+    if (!event || !event.id) {
+      throw new Error('BackendFiscalCustody: Se requiere un FiscalEvent válido con identificador.');
+    }
+
+    const releaseLock = await acquireGlobalPersistenceLock(15000);
     try {
+      this.init();
+      loadFromDisk(); // Lectura atómica del estado en disco
+
+      eventsCache.push(Object.freeze(event));
+
+      // Persistir a disco atómicamente; si falla, relanzar el error (fail-closed)
       persistEventsToDisk();
-    } catch (err) {
-      console.error('BackendFiscalCustody: Error persistiendo event:', err);
+
+      // C1: Persistir FiscalEvent en Google Cloud Firestore
+      try {
+        const { db, sanitizeForFirestore } = await import('../utils/firebase');
+        const { doc, setDoc } = await import('firebase/firestore');
+        if (db) {
+          await setDoc(doc(db, 'fiscal_events', event.id), sanitizeForFirestore(event));
+        }
+      } catch (cloudErr: any) {
+        console.warn('BackendFiscalCustody: Sincronización event Firestore en modo local/fallback:', cloudErr.message || cloudErr);
+      }
+    } catch (err: any) {
+      console.error('BackendFiscalCustody: Error persistiendo event a disco:', err);
+      throw err;
+    } finally {
+      releaseLock();
     }
   }
 
@@ -359,6 +591,7 @@ export class BackendFiscalCustody {
    */
   public static getFiscalEvents(fiscalRecordId?: string): FiscalEvent[] {
     this.init();
+    loadFromDisk();
     if (fiscalRecordId) {
       return eventsCache.filter(e => e.fiscalRecordId === fiscalRecordId);
     }

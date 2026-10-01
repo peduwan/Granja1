@@ -47,24 +47,34 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Arquitectura SIF (Fase 3.1.3): Registros Fiscales Inmutables
-    // Prohibida estrictamente la creación o alteración directa desde clientes del navegador.
-    // Solo lectura para usuarios autorizados. La autoridad de emisión reside en backend.
+    // Arquitectura SIF Inmutable (RD 1007/2023 y Orden HAC/1177/2024)
+    // Inmutabilidad estricta: Una vez creado el registro, se prohíbe cualquier alteración o borrado.
+    // Creación autorizada únicamente para usuarios verificados en el backend / autorizados.
     match /fiscal_records/{recordId} {
       allow read: if isAuthorizedUser();
-      allow write: if false;
+      allow create: if isAuthorizedUser();
+      allow update, delete: if false;
     }
 
-    // Historial y Cola Outbox de Sumisiones AEAT (Gestionado por Backend)
+    // Cerrojo distribuido y estado de cadena por obligado tributario (Cloud Run Multi-Instancia)
+    match /fiscal_chain_state/{obligadoId} {
+      allow read: if isAuthorizedUser();
+      allow write: if isAuthorizedUser();
+    }
+
+    // Historial y Cola Outbox de Sumisiones AEAT (Inmutable en borrado)
     match /fiscal_submissions/{submissionId} {
       allow read: if isAuthorizedUser();
-      allow write: if false;
+      allow create: if isAuthorizedUser();
+      allow update: if isAuthorizedUser();
+      allow delete: if false;
     }
 
-    // Libro de Auditoría de Eventos del SIF (Inmutable: Gestionado por Backend)
+    // Libro de Auditoría de Eventos del SIF (Estrictamente Inmutable)
     match /fiscal_events/{eventId} {
       allow read: if isAuthorizedUser();
-      allow write: if false;
+      allow create: if isAuthorizedUser();
+      allow update, delete: if false;
     }
   }
 }

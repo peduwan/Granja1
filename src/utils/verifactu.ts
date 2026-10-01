@@ -28,32 +28,21 @@ export async function calcularSha256(cadena: string): Promise<string> {
 }
 
 /**
- * @deprecated LEGACY / FASE 1.x PROVISIONAL
- * No utilizar para nuevas emisiones fiscales.
+ * @deprecated PROHIBIDO EN CLIENTE (FASE 3.1.5 / C3)
+ * No utilizar para emisiones fiscales.
  * El cálculo oficial canónico y encadenamiento SHA-256 según Orden HAC/1177/2024
- * se gestiona de forma exclusiva en `src/fiscal/hashService.ts`.
+ * se gestiona de forma exclusiva en el backend (`src/fiscal/hashService.ts` / `/api/fiscal/emit-invoice`).
  */
-export async function generarHuellaVeriFactu(params: {
+export async function generarHuellaVeriFactu(_params: {
   nifEmisor: string;
   numSerieFactura: string;
-  fechaExpedicion: string; // YYYY-MM-DD
-  tipoFactura: string; // F1, R1, R4...
+  fechaExpedicion: string;
+  tipoFactura: string;
   totalFactura: number;
   hashAnterior: string;
-  fechaHoraSellado: string; // ISO 8601
+  fechaHoraSellado: string;
 }): Promise<string> {
-  const totalFormateado = Number(params.totalFactura).toFixed(2);
-  const cadenaPlana = [
-    (params.nifEmisor || '').trim().toUpperCase(),
-    (params.numSerieFactura || '').trim(),
-    (params.fechaExpedicion || '').trim(),
-    (params.tipoFactura || 'F1').trim(),
-    totalFormateado,
-    (params.hashAnterior || '').trim().toUpperCase(),
-    (params.fechaHoraSellado || '').trim()
-  ].join('&');
-
-  return await calcularSha256(cadenaPlana);
+  throw new Error('VIOLACIÓN DE AUTORIDAD FISCAL: La huella fiscal no puede ser calculada en el navegador. La emisión oficial reside exclusivamente en el backend.');
 }
 
 /**

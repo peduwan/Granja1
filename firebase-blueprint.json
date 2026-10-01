@@ -80,6 +80,10 @@
       "schema": "RegistroFacturacionVeriFactu",
       "description": "Libro mayor de registros de facturación de alta inmutables y encadenados según SIF (RD 1007/2023)"
     },
+    "/fiscal_chain_state/{obligadoId}": {
+      "schema": "RegistroFacturacionVeriFactu",
+      "description": "Documento de estado atómico de secuencia y punta de cadena por obligado tributario para cerrojo distribuido en Cloud Run"
+    },
     "/fiscal_submissions/{submissionId}": {
       "schema": "RegistroFacturacionVeriFactu",
       "description": "Historial de sumisiones y reintentos ante AEAT"

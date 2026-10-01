@@ -11,6 +11,8 @@ import { emitFiscalInvoice, emitFiscalAnulacion } from "./src/fiscal/emissionSer
 import { BackendFiscalCustody } from "./src/fiscal/backendCustodyRepository";
 import { verifyFiscalRecordHash } from "./src/fiscal/hashService";
 import { createFiscalSubmission } from "./src/fiscal/submissionService";
+import { FiscalRecord, FiscalConfiguration } from "./src/fiscal/types";
+import { getAeatSoapEndpoint } from "./src/fiscal/aeatEndpoints";
 import {
   requireFiscalAuthMiddleware,
   assertObligadoAuthorized,
@@ -966,11 +968,51 @@ app.get("/api/fiscal/cert-status", (_req, res) => {
   });
 });
 
+function getServerFiscalConfig(record: FiscalRecord): FiscalConfiguration {
+  const isProdEnv = process.env.AEAT_ENVIRONMENT === 'produccion' || process.env.AEAT_ENVIRONMENT === 'production';
+  const entornoAeat = isProdEnv ? 'produccion' : 'pruebas';
+  const hasCert = AeatCertificateProvider.hasCertificate();
+  const endpointUrl = getAeatSoapEndpoint(isProdEnv ? 'production' : 'test');
+
+  return {
+    obligadoTributarioId: record.obligadoTributarioId,
+    nifEmisor: record.emisor.nif,
+    nombreRazonEmisor: record.emisor.nombreRazon,
+    modalidad: 'VERI_FACTU',
+    entornoAeat,
+    versionEspecificacion: '1.0',
+    sistemaInformatico: {
+      nombreRazon: 'Gestión Avícola Software S.L.',
+      nif: 'B99999999',
+      nombreSistemaInformatico: 'Gestión Avícola SIF',
+      idSistemaInformatico: '01',
+      version: '1.0.0',
+      numeroInstalacion: 'INST-001',
+      tipoUsoPosibleSoloVerifactu: 'S',
+      tipoUsoPosibleMultiOT: 'N',
+      indicadorMultiplesOT: 'N'
+    },
+    remisionAutomatica: true,
+    reintentosMaximos: 3,
+    minutosEntreReintentos: 5,
+    transporte: {
+      endpointUrl,
+      timeoutMs: 30000,
+      certificadoConfigurado: hasCert
+    },
+    certificadoConfigurado: hasCert,
+    fechaActivacion: new Date().toISOString()
+  };
+}
+
 // 5. Remisión a AEAT con verificación criptográfica estricta y cerrojo de concurrencia
 // Exige un fiscalRecordId preexistente en custodia de backend (prohibido inyectar registros arbitrarios)
 app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
-    const { submission, config, options, fiscalRecordId } = req.body;
+    // 1. SEGURIDAD ESTRICTA: El cliente NO tiene autoridad sobre el XML, el endpoint, las cabeceras,
+    // el transporte ni la configuración. Se acepta ÚNICAMENTE 'fiscalRecordId'.
+    // Cualquier 'submission', 'config', 'options' o 'endpointOverride' enviado por el cliente es totalmente ignorado.
+    const { fiscalRecordId } = req.body || {};
 
     if (!fiscalRecordId || typeof fiscalRecordId !== 'string') {
       return res.status(400).json({
@@ -985,14 +1027,14 @@ app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAu
       });
     }
 
-    // Validar autorización del obligado para el usuario autenticado
+    // 2. Validar autorización del obligado para el usuario autenticado
     try {
       assertObligadoAuthorized(req.fiscalUser!, recordToSubmit.obligadoTributarioId);
     } catch (authErr: any) {
       return res.status(authErr.statusCode || 403).json({ error: authErr.message });
     }
 
-    // Verificación criptográfica obligatoria en backend de la huella SHA-256
+    // 3. Verificación criptográfica obligatoria en backend de la huella SHA-256
     const verification = await verifyFiscalRecordHash(recordToSubmit);
     if (!verification.valid) {
       return res.status(400).json({
@@ -1000,27 +1042,31 @@ app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAu
       });
     }
 
-    const fiscalConfig = config || {
-      entornoAeat: 'test',
-      obligadoTributarioId: recordToSubmit.obligadoTributarioId,
-      nifEmisor: recordToSubmit.emisor.nif
-    };
+    // 4. Configuración y Sumisión resueltas EXCLUSIVAMENTE en servidor (cero autoridad de cliente)
+    const serverFiscalConfig = getServerFiscalConfig(recordToSubmit);
+    const serverSubmission = createFiscalSubmission(recordToSubmit, serverFiscalConfig);
 
-    let subToUse = submission;
-    if (!subToUse) {
-      subToUse = createFiscalSubmission(recordToSubmit, fiscalConfig);
-    }
+    // 5. Transporte estrictamente confiable
+    const serverTransportMode = process.env.AEAT_TRANSPORT_MODE || (AeatCertificateProvider.hasCertificate() ? 'real' : 'mock');
 
     const result = await executeAeatSubmission({
-      submission: subToUse,
+      submission: serverSubmission,
       fiscalRecord: recordToSubmit,
-      config: fiscalConfig,
-      options
+      config: serverFiscalConfig,
+      options: {
+        transportMode: serverTransportMode as any,
+        actor: {
+          tipo: 'USER',
+          id: req.fiscalUser?.uid,
+          email: req.fiscalUser?.email,
+          nombre: req.fiscalUser?.email || 'AuthenticatedOperator'
+        }
+      }
     });
 
-    // Guardar submission y event en custodia de backend
-    BackendFiscalCustody.saveFiscalSubmission(result.submission);
-    BackendFiscalCustody.saveFiscalEvent(result.fiscalEvent);
+    // 6. Persistencia fail-closed en custodia de backend (si falla persistir en disco, el endpoint lanza 500)
+    await BackendFiscalCustody.saveFiscalSubmission(result.submission);
+    await BackendFiscalCustody.saveFiscalEvent(result.fiscalEvent);
 
     res.json(result);
   } catch (err: any) {

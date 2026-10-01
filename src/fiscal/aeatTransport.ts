@@ -385,6 +385,22 @@ export async function executeAeatSubmission(params: {
     throw new Error(`executeAeatSubmission: Incoherencia crítica. La submission (${submission.fiscalRecordId}) no coincide con el FiscalRecord (${fiscalRecord.id}).`);
   }
 
+  // Validación temprana de seguridad de destino: prohibido desviar tráfico hacia hosts ajenos a AEAT
+  if (options?.endpointOverride) {
+    const override = options.endpointOverride.trim();
+    const allowedPrefixes = [
+      'https://www1.agenciatributaria.gob.es',
+      'https://www10.agenciatributaria.gob.es',
+      'https://prewww1.aeat.es',
+      'https://prewww10.aeat.es',
+      'mock://'
+    ];
+    const isAllowed = allowedPrefixes.some(prefix => override.startsWith(prefix));
+    if (!isAllowed) {
+      throw new Error(`executeAeatSubmission: endpointOverride ('${override}') no autorizado. Solo se permiten destinos oficiales de la Agencia Tributaria. Prohibido desviar tráfico o credenciales mTLS a hosts de terceros.`);
+    }
+  }
+
   // Comprobación de XML oficial: no enviar sin XML oficial sellado
   const xmlParaEnvio = submission.xmlEnviado || fiscalRecord.xmlOficial;
   if (!xmlParaEnvio || xmlParaEnvio === '<pending_xml/>' || xmlParaEnvio.trim() === '') {
@@ -480,9 +496,25 @@ export async function executeAeatSubmission(params: {
         responseText = mockResult.text;
       } else {
         // Transporte real HTTP/mTLS
-        const endpoint = options?.endpointOverride || submission.endpoint || (
+        let endpoint = submission.endpoint || (
           config.entornoAeat === 'produccion' ? AEAT_SOAP_ENDPOINTS.production : AEAT_SOAP_ENDPOINTS.testing
         );
+
+        if (options?.endpointOverride) {
+          const override = options.endpointOverride.trim();
+          const allowedPrefixes = [
+            'https://www1.agenciatributaria.gob.es',
+            'https://www10.agenciatributaria.gob.es',
+            'https://prewww1.aeat.es',
+            'https://prewww10.aeat.es',
+            'mock://'
+          ];
+          const isAllowed = allowedPrefixes.some(prefix => override.startsWith(prefix));
+          if (!isAllowed) {
+            throw new Error(`executeAeatSubmission: endpointOverride ('${override}') no autorizado. Solo se permiten destinos oficiales de la Agencia Tributaria. Prohibido desviar tráfico o credenciales mTLS a hosts de terceros.`);
+          }
+          endpoint = override;
+        }
 
         const certCreds = AeatCertificateProvider.getCredentials();
         const customFetch = options?.customFetch;

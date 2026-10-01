@@ -10,7 +10,7 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/fase1.test.ts && tsx tests/fase2_1.test.ts && tsx tests/fase2_2.test.ts && tsx tests/fase2_3.test.ts && tsx tests/fase3_1.test.ts && tsx tests/fase3_1_1.test.ts && tsx tests/fase3_1_2.test.ts && tsx tests/fase3_1_3.test.ts && tsx tests/fase3_1_4.test.ts"
+    "test": "tsx tests/fase1.test.ts && tsx tests/fase2_1.test.ts && tsx tests/fase2_2.test.ts && tsx tests/fase2_3.test.ts && tsx tests/fase3_1.test.ts && tsx tests/fase3_1_1.test.ts && tsx tests/fase3_1_2.test.ts && tsx tests/fase3_1_3.test.ts && tsx tests/fase3_1_4.test.ts && tsx tests/auditoria_seguridad_exhaustiva.test.ts && tsx tests/fase3_1_5_cloud_resilience.test.ts"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",
