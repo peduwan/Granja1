@@ -226,9 +226,12 @@ function buildDesgloseXml(desgloseIVA: readonly DesgloseIvaFiscal[]): string {
   lines.push('      <sf:Desglose>');
 
   for (const item of desgloseIVA) {
-    const impuesto = item.impuesto || '01'; // 01 = IVA
-    const claveRegimen = item.claveRegimen || '01'; // 01 = Régimen general
-    const calificacion = item.calificacionOperacion || 'S1'; // S1 = Sujeta y no exenta sin ISP
+    const impuesto = item.impuesto;
+    const claveRegimen = item.claveRegimen;
+    const calificacion = item.calificacionOperacion;
+    if (!impuesto || !claveRegimen || (!calificacion && !item.operacionExenta)) {
+      throw new Error('aeatVerifactuXmlBuilder: el desglose fiscal requiere Impuesto, ClaveRegimen y CalificacionOperacion/OperacionExenta determinados por el modelo fiscal; no se permiten valores por defecto.');
+    }
     const base = formatImporteFiscal(item.baseImponible);
     const cuota = formatImporteFiscal(item.cuotaRepercutida);
     const tipo = item.tipoImpositivo !== undefined ? Number(item.tipoImpositivo).toFixed(2) : undefined;
