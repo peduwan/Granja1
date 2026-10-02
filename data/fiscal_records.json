@@ -1,0 +1,570 @@
+[
+  {
+    "id": "frec-fac-1790945324078-ae8n",
+    "obligadoTributarioId": "A11111114",
+    "invoiceId": "fac-1790945324078-ae8n",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "A11111114",
+      "nombreRazon": "Granja Avícola A S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FAC-XML-CTRL-01",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:44",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": true
+    },
+    "huella": {
+      "hash": "C8EB77B9950268024891534916F1D51812A321F09F64C81C354BD88329198EFD",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=A11111114&NumSerieFactura=FAC-XML-CTRL-01&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=&FechaHoraHusoGenRegistro=2026-10-02T12:48:44+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:44+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=A11111114&numserie=FAC-XML-CTRL-01&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=A11111114&numserie=FAC-XML-CTRL-01&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945324874-ydp8",
+    "obligadoTributarioId": "B22222228",
+    "invoiceId": "fac-1790945324874-ydp8",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B22222228",
+      "nombreRazon": "Granja Avícola B S.A."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FAC-CONCUR-B1",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:44",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": true
+    },
+    "huella": {
+      "hash": "A0820EF7D5F3CD02F9CA035DBB3C2B902C0644CDBA5721D7DA9D42E27220EC25",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=B22222228&NumSerieFactura=FAC-CONCUR-B1&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=&FechaHoraHusoGenRegistro=2026-10-02T12:48:44+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:44+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B22222228&numserie=FAC-CONCUR-B1&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B22222228&numserie=FAC-CONCUR-B1&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945324874-7kg2",
+    "obligadoTributarioId": "A11111114",
+    "invoiceId": "fac-1790945324874-7kg2",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "A11111114",
+      "nombreRazon": "Granja Avícola A S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FAC-CONCUR-A1",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:44",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": false,
+      "registroAnterior": {
+        "idEmisorFactura": "A11111114",
+        "numSerieFactura": "FAC-XML-CTRL-01",
+        "fechaExpedicionFactura": "2026-02-15",
+        "huella": "C8EB77B9950268024891534916F1D51812A321F09F64C81C354BD88329198EFD"
+      }
+    },
+    "huella": {
+      "hash": "EB31AA45FDDE069FFAB0856FAA456AA46D8A801374F021BC9FAEDCEBE4F981A0",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=A11111114&NumSerieFactura=FAC-CONCUR-A1&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=C8EB77B9950268024891534916F1D51812A321F09F64C81C354BD88329198EFD&FechaHoraHusoGenRegistro=2026-10-02T12:48:44+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:44+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=A11111114&numserie=FAC-CONCUR-A1&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=A11111114&numserie=FAC-CONCUR-A1&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945325570-1pz4",
+    "obligadoTributarioId": "B33333331",
+    "invoiceId": "fac-1790945325570-1pz4",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B33333331",
+      "nombreRazon": "Granja Fork S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FORK-ROOT",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:45",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": true
+    },
+    "huella": {
+      "hash": "B68E4AF4E07CB710A16644010D84AFC6443A48333811786987D57649199FEA6A",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=B33333331&NumSerieFactura=FORK-ROOT&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=&FechaHoraHusoGenRegistro=2026-10-02T12:48:45+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:45+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-ROOT&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-ROOT&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945325587-d5gp",
+    "obligadoTributarioId": "B33333331",
+    "invoiceId": "fac-1790945325587-d5gp",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B33333331",
+      "nombreRazon": "Granja Fork S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FORK-RAMA-B",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:45",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": false,
+      "registroAnterior": {
+        "idEmisorFactura": "B33333331",
+        "numSerieFactura": "FORK-ROOT",
+        "fechaExpedicionFactura": "2026-02-15",
+        "huella": "B68E4AF4E07CB710A16644010D84AFC6443A48333811786987D57649199FEA6A"
+      }
+    },
+    "huella": {
+      "hash": "2C2F6C79DAAEFEA4CE998AAC340683B55E06AD455054AFC274D03CA912EE3F94",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=B33333331&NumSerieFactura=FORK-RAMA-B&FechaExpedicionFactura=15-02-2026&TipoFactura=F1&CuotaTotal=1.40&ImporteTotal=36.40&Huella=B68E4AF4E07CB710A16644010D84AFC6443A48333811786987D57649199FEA6A&FechaHoraHusoGenRegistro=2026-10-02T12:48:45+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:45+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-RAMA-B&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-RAMA-B&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-FORK-C-1790945325604",
+    "obligadoTributarioId": "B33333331",
+    "invoiceId": "fac-1790945325587-d5gp",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B33333331",
+      "nombreRazon": "Granja Fork S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Restaurante El Mirador S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FORK-RAMA-B",
+      "fechaExpedicion": "2026-02-15",
+      "horaExpedicion": "12:48:45",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 35,
+          "cuotaRepercutida": 1.4
+        }
+      ],
+      "baseImponibleTotal": 35,
+      "cuotaTotal": 1.4,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 36.4
+    },
+    "encadenamiento": {
+      "primerRegistro": false,
+      "registroAnterior": {
+        "idEmisorFactura": "B33333331",
+        "numSerieFactura": "FORK-ROOT",
+        "fechaExpedicionFactura": "2026-02-15",
+        "huella": "B68E4AF4E07CB710A16644010D84AFC6443A48333811786987D57649199FEA6A"
+      }
+    },
+    "huella": {
+      "hash": "C00000000000000000000000000000000000000000000000000000000000000C",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "FORK-C"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:45+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-RAMA-B&fecha=15-02-2026&importe=36.40",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B33333331&numserie=FORK-RAMA-B&fecha=15-02-2026&importe=36.40",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-02-15T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945326673-xv99",
+    "obligadoTributarioId": "B88888888",
+    "invoiceId": "fac-1790945326673-xv99",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B88888888",
+      "nombreRazon": "Granja Avícola San Antonio S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Distribuciones Agrícolas S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FAC-CLOUD-01",
+      "fechaExpedicion": "2026-03-01",
+      "horaExpedicion": "12:48:47",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 150,
+          "cuotaRepercutida": 6
+        }
+      ],
+      "baseImponibleTotal": 150,
+      "cuotaTotal": 6,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 156
+    },
+    "encadenamiento": {
+      "primerRegistro": true
+    },
+    "huella": {
+      "hash": "6AE10AEAEB382D4F28E8F13DF73AD6DF761E8D6CA855B7B22DFE0E368DFFED5C",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-CLOUD-01&FechaExpedicionFactura=01-03-2026&TipoFactura=F1&CuotaTotal=6.00&ImporteTotal=156.00&Huella=&FechaHoraHusoGenRegistro=2026-10-02T12:48:47+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:47+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-CLOUD-01&fecha=01-03-2026&importe=156.00",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-CLOUD-01&fecha=01-03-2026&importe=156.00",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-03-01T10:00:00Z"
+  },
+  {
+    "id": "frec-fac-1790945327240-qllb",
+    "obligadoTributarioId": "B88888888",
+    "invoiceId": "fac-1790945327240-qllb",
+    "tipoRegistro": "alta",
+    "modoFiscal": "VERI_FACTU",
+    "versionEspecificacion": "1.0",
+    "sistemaInformatico": {
+      "nombreRazon": "Gestión Avícola Software S.L.",
+      "nif": "B99999999",
+      "nombreSistemaInformatico": "Gestión Avícola SIF",
+      "idSistemaInformatico": "01",
+      "version": "1.0.0",
+      "numeroInstalacion": "INST-001",
+      "tipoUsoPosibleSoloVerifactu": "S",
+      "tipoUsoPosibleMultiOT": "N",
+      "indicadorMultiplesOT": "N"
+    },
+    "emisor": {
+      "nif": "B88888888",
+      "nombreRazon": "Granja Avícola San Antonio S.L."
+    },
+    "destinatario": {
+      "nif": "B99999999",
+      "nombreRazon": "Distribuciones Agrícolas S.L.",
+      "codigoPais": "ES"
+    },
+    "factura": {
+      "numeroFactura": "FAC-CLOUD-02",
+      "fechaExpedicion": "2026-03-01",
+      "horaExpedicion": "12:48:47",
+      "tipoFactura": "F1",
+      "descripcionOperacion": "Venta y distribución de huevos de granja",
+      "facturaSimplificadaArt7273": "N",
+      "facturaSinIdentifDestinatarioArt61d": "N",
+      "macrodato": "N"
+    },
+    "desgloseTributario": {
+      "desgloseIVA": [
+        {
+          "tipoImpositivo": 4,
+          "baseImponible": 150,
+          "cuotaRepercutida": 6
+        }
+      ],
+      "baseImponibleTotal": 150,
+      "cuotaTotal": 6,
+      "cuotaRecargoTotal": 0,
+      "importeTotal": 156
+    },
+    "encadenamiento": {
+      "primerRegistro": false,
+      "registroAnterior": {
+        "idEmisorFactura": "B88888888",
+        "numSerieFactura": "FAC-CLOUD-01",
+        "fechaExpedicionFactura": "2026-03-01",
+        "huella": "6AE10AEAEB382D4F28E8F13DF73AD6DF761E8D6CA855B7B22DFE0E368DFFED5C"
+      }
+    },
+    "huella": {
+      "hash": "56AB0FC3E665CEEBA4DBBF7519920BAB835D4A0C776BBBD0F3A338FFCA7C8F23",
+      "algoritmo": "SHA-256",
+      "especificacionVersion": "HAC/1177/2024",
+      "cadenaTextoCanonico": "IDEmisorFactura=B88888888&NumSerieFactura=FAC-CLOUD-02&FechaExpedicionFactura=01-03-2026&TipoFactura=F1&CuotaTotal=6.00&ImporteTotal=156.00&Huella=6AE10AEAEB382D4F28E8F13DF73AD6DF761E8D6CA855B7B22DFE0E368DFFED5C&FechaHoraHusoGenRegistro=2026-10-02T12:48:47+00:00"
+    },
+    "fechaHoraHusoGenRegistro": "2026-10-02T12:48:47+00:00",
+    "qr": {
+      "url": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-CLOUD-02&fecha=01-03-2026&importe=156.00",
+      "payloadTexto": "https://www2.agenciatributaria.gob.es/wlpl/TIKE-CONT/ValidarQR?nif=B88888888&numserie=FAC-CLOUD-02&fecha=01-03-2026&importe=156.00",
+      "qrDataUri": "data:image/png;base64,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"
+    },
+    "estado": "sellado_inmutable",
+    "creadoEn": "2026-03-01T10:00:00Z"
+  }
+]

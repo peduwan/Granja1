@@ -1,0 +1,32 @@
+{
+  "A11111114": {
+    "obligadoTributarioId": "A11111114",
+    "latestRecordId": "frec-fac-1790945324874-7kg2",
+    "latestHuella": "EB31AA45FDDE069FFAB0856FAA456AA46D8A801374F021BC9FAEDCEBE4F981A0",
+    "latestNumeroFactura": "FAC-CONCUR-A1",
+    "latestFecha": "2026-02-15",
+    "totalRecords": 2,
+    "sequence": 2,
+    "updatedAt": "2026-10-02T12:48:44.938Z"
+  },
+  "B22222228": {
+    "obligadoTributarioId": "B22222228",
+    "latestRecordId": "frec-fac-1790945324874-ydp8",
+    "latestHuella": "A0820EF7D5F3CD02F9CA035DBB3C2B902C0644CDBA5721D7DA9D42E27220EC25",
+    "latestNumeroFactura": "FAC-CONCUR-B1",
+    "latestFecha": "2026-02-15",
+    "totalRecords": 1,
+    "sequence": 1,
+    "updatedAt": "2026-10-02T12:48:44.913Z"
+  },
+  "B33333331": {
+    "obligadoTributarioId": "B33333331",
+    "latestRecordId": "frec-fac-1790945325587-d5gp",
+    "latestHuella": "2C2F6C79DAAEFEA4CE998AAC340683B55E06AD455054AFC274D03CA912EE3F94",
+    "latestNumeroFactura": "FORK-RAMA-B",
+    "latestFecha": "2026-02-15",
+    "totalRecords": 2,
+    "sequence": 2,
+    "updatedAt": "2026-10-02T12:48:45.602Z"
+  }
+}

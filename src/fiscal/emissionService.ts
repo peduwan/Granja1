@@ -220,17 +220,12 @@ async function executeEmitFiscalInvoice(
       previousRecord = params.previousRecordRef;
     } else {
       if (typeof window === 'undefined') {
-        try {
-          const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-          const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
-          previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
-            candidateRefs: params.existingRecordRefs
-          });
-        } catch {
-          previousRecord = getLastFiscalRecord(obligadoTributarioId, {
-            candidateRefs: params.existingRecordRefs
-          });
-        }
+        // AUTORIDAD DISTRIBUIDA FAIL-CLOSED EN BACKEND:
+        // Se resuelve exclusivamente contra la custodia distribuida de la nube.
+        // Si la autoridad falla o está inaccesible, se arroja excepción inmediata (sin degradación a memoria local).
+        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+        const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
+        previousRecord = latestFromCustody || latestEmittedByObligado.get(obligadoTributarioId) || null;
       } else {
         previousRecord = getLastFiscalRecord(obligadoTributarioId, {
           candidateRefs: params.existingRecordRefs
@@ -477,17 +472,10 @@ async function executeEmitFiscalAnulacion(
       previousRecord = params.previousRecordRef;
     } else {
       if (typeof window === 'undefined') {
-        try {
-          const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-          const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
-          previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
-            candidateRefs: params.existingRecordRefs
-          });
-        } catch {
-          previousRecord = getLastFiscalRecord(obligadoTributarioId, {
-            candidateRefs: params.existingRecordRefs
-          });
-        }
+        // AUTORIDAD DISTRIBUIDA FAIL-CLOSED EN BACKEND:
+        const { BackendFiscalCustody } = await import('./backendCustodyRepository');
+        const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
+        previousRecord = latestFromCustody || latestEmittedByObligado.get(obligadoTributarioId) || null;
       } else {
         previousRecord = getLastFiscalRecord(obligadoTributarioId, {
           candidateRefs: params.existingRecordRefs

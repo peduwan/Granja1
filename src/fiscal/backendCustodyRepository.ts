@@ -354,22 +354,15 @@ export class BackendFiscalCustody {
           }
         }
 
-        // 4. C1 & C2: Coordinación distribuida multi-instancia y persistencia en Google Cloud Firestore
+        // 4. C1 & C2: Compromiso obligatorio en la autoridad de nube (Fail-Closed estricto)
         // El compromiso en la autoridad de nube debe ocurrir ANTES de mutar la memoria local o el disco
-        // para garantizar atomicidad estricta y prevenir registros sucios o bifurcados en caso de conflicto.
-        try {
-          const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
-          await CloudDistributedChainCoordinator.commitRecord(record);
-        } catch (cloudErr: any) {
-          if (cloudErr.message?.includes('Violación de encadenamiento') || 
-              cloudErr.message?.includes('Bifurcación de cadena') ||
-              cloudErr.message?.includes('Violación de inmutabilidad')) {
-            throw cloudErr;
-          }
-          console.warn('BackendFiscalCustody: Aviso en coordinador cloud multi-instancia:', cloudErr.message || cloudErr);
-        }
+        // para garantizar atomicidad estricta y prevenir registros sucios o bifurcados.
+        // Si el compromiso falla por CUALQUIER motivo (bifurcación, violación de encadenamiento, fallo de red,
+        // timeout o indisponibilidad de Firestore), la emisión se aborta tajantemente sin persistir nada en local.
+        const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+        await CloudDistributedChainCoordinator.commitRecord(record);
 
-        // 5. Persistir atómicamente en custodia inmutable local sólo si el commit distribuido fue aceptado
+        // 5. Persistir atómicamente en custodia local SÓLO si el commit distribuido fue aceptado
         recordsCache.push(Object.freeze(record));
         try {
           persistRecordsToDisk();
@@ -389,7 +382,7 @@ export class BackendFiscalCustody {
 
   /**
    * Obtiene el último registro fiscal sellado para un obligado tributario.
-   * Resuelve matemáticamente la cabeza/punta de la cadena criptográfica SHA-256.
+   * Resuelve matemáticamente la cabeza/punta de la cadena criptográfica SHA-256 en la réplica local.
    * Si detecta múltiples puntas de cadena (cadena bifurcada A -> B y A -> C),
    * RECHAZA la selección de punta arbitraria y aborta inmediatamente con un error de seguridad.
    */
@@ -430,40 +423,51 @@ export class BackendFiscalCustody {
 
   /**
    * Recupera de forma asíncrona y distribuida el último registro fiscal de un obligado.
-   * Consulta la custodia distribuida de la nube (Cloud Run / Firestore) para
-   * asegurar que se conoce la cabeza más reciente aunque haya sido emitida por otra instancia.
+   * Consulta la autoridad distribuida de la nube (Cloud Run / Firestore) con política FAIL-CLOSED estricta:
+   * Si la autoridad de la nube falla o está inaccesible, se PROPAGA el error y se aborta la emisión.
+   * Queda PROHIBIDO degradarse silenciosamente a la caché o archivos locales.
    */
   public static async getLatestFiscalRecordAsync(obligadoTributarioId: string): Promise<FiscalRecordRef | FiscalRecord | null> {
     this.init();
     loadFromDisk();
 
-    try {
-      const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
-      const cloudState = await CloudDistributedChainCoordinator.getLatestState(obligadoTributarioId);
-      if (cloudState) {
-        const local = recordsCache.find(r => r.id === cloudState.latestRecordId);
-        if (local) return local;
+    const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+    // Consulta la autoridad distribuida de forma obligatoria y estricta (FAIL-CLOSED)
+    // NUNCA absorbe errores de infraestructura ni degrada silenciosamente a la custodia de disco local.
+    const cloudState = await CloudDistributedChainCoordinator.getLatestState(obligadoTributarioId);
+    
+    if (cloudState) {
+      const local = recordsCache.find(r => r.id === cloudState.latestRecordId);
+      if (local) return local;
 
-        const remoteRecord = await CloudDistributedChainCoordinator.getRecordById(cloudState.latestRecordId);
-        if (remoteRecord) {
-          recordsCache.push(Object.freeze(remoteRecord));
-          try { persistRecordsToDisk(); } catch {}
-          return remoteRecord;
-        }
-
-        return {
-          id: cloudState.latestRecordId,
-          obligadoTributarioId: cloudState.obligadoTributarioId,
-          invoiceId: cloudState.latestRecordId,
-          numeroFactura: cloudState.latestNumeroFactura,
-          fechaExpedicion: cloudState.latestFecha,
-          huellaHash: cloudState.latestHuella,
-          creadoEn: cloudState.updatedAt
-        };
+      const remoteRecord = await CloudDistributedChainCoordinator.getRecordById(cloudState.latestRecordId);
+      if (remoteRecord) {
+        recordsCache.push(Object.freeze(remoteRecord));
+        try { persistRecordsToDisk(); } catch {}
+        return remoteRecord;
       }
-    } catch {}
 
-    return this.getLatestFiscalRecord(obligadoTributarioId);
+      return {
+        id: cloudState.latestRecordId,
+        obligadoTributarioId: cloudState.obligadoTributarioId,
+        invoiceId: cloudState.latestRecordId,
+        numeroFactura: cloudState.latestNumeroFactura,
+        fechaExpedicion: cloudState.latestFecha,
+        huellaHash: cloudState.latestHuella,
+        creadoEn: cloudState.updatedAt
+      };
+    }
+
+    // Si cloudState es null, la autoridad en la nube certifica que NO existen registros previos (Génesis)
+    // Verificamos que la custodia local no tenga registros huérfanos que provocarían discrepancia/bifurcación
+    const localRecords = recordsCache.filter(r => r.obligadoTributarioId === obligadoTributarioId);
+    if (localRecords.length > 0) {
+      throw new Error(
+        `BackendFiscalCustody: Discrepancia crítica de autoridad fiscal. La autoridad distribuida en la nube indica 0 registros previos (génesis) para el obligado '${obligadoTributarioId}', pero existen ${localRecords.length} registros en la custodia local. Emisión abortada para prevenir bifurcación.`
+      );
+    }
+
+    return null;
   }
 
   /**
@@ -476,21 +480,19 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Recupera un registro fiscal por ID de forma asíncrona, consultando la nube si no está en disco local.
+   * Recupera un registro fiscal por ID de forma asíncrona, consultando la nube de forma estricta si no está en disco local.
    */
   public static async getFiscalRecordByIdAsync(recordId: string): Promise<FiscalRecord | null> {
     const local = this.getFiscalRecordById(recordId);
     if (local) return local;
 
-    try {
-      const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
-      const remote = await CloudDistributedChainCoordinator.getRecordById(recordId);
-      if (remote) {
-        recordsCache.push(Object.freeze(remote));
-        try { persistRecordsToDisk(); } catch {}
-        return remote;
-      }
-    } catch {}
+    const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+    const remote = await CloudDistributedChainCoordinator.getRecordById(recordId);
+    if (remote) {
+      recordsCache.push(Object.freeze(remote));
+      try { persistRecordsToDisk(); } catch {}
+      return remote;
+    }
 
     return null;
   }

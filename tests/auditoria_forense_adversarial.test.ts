@@ -395,6 +395,150 @@ async function main() {
     assert.strictEqual(retrieved.huella.hash, target.huella.hash);
   });
 
+  // ---------------------------------------------------------------------------
+  // P0/P1 — DEFENSA 5: FAIL-CLOSED TOTAL Y PROHIBICIÓN ABSOLUTA DE FALLBACK A DISCO
+  // ---------------------------------------------------------------------------
+  console.log('\n--- DEFENSA 5 (P0/P1): ZERO-FALLBACK Y FAIL-CLOSED EN AUTORIDAD CLOUD ---');
+
+  await runAdversarialTest('5.1: En modo firestore, fallo de infraestructura en commitRecord arroja excepción y NO degrada a disco local', async () => {
+    CloudDistributedChainCoordinator.setMode('firestore');
+
+    // Inyectar un mock de Firestore Admin que simule un fallo de red/gRPC o indisponibilidad
+    const mockFaultyFirestore = {
+      collection: () => ({
+        doc: () => ({})
+      }),
+      runTransaction: async () => {
+        throw new Error('UNAVAILABLE: Firestore gRPC transport connection broken');
+      }
+    };
+
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(mockFaultyFirestore as any);
+
+    const latest = BackendFiscalCustody.getLatestFiscalRecord(OBLIGADO_TEST_A)!;
+    const invInfra = createInvoice('FAC-INFRA-01', OBLIGADO_TEST_A);
+    const hashRes = await calculateAltaHash({
+      nifEmisor: OBLIGADO_TEST_A,
+      numSerieFactura: invInfra.numeroFactura,
+      fechaExpedicion: '2026-03-01',
+      tipoFactura: 'F1',
+      cuotaTotal: invInfra.totales.cuotaIva,
+      importeTotal: invInfra.totales.totalDocumento,
+      huellaAnterior: latest.huella.hash,
+      fechaHoraHusoGenRegistro: '2026-03-01T12:00:00+01:00'
+    });
+
+    const testRecord: FiscalRecord = {
+      ...latest,
+      id: `rec-infra-fail-${Date.now()}`,
+      factura: {
+        ...latest.factura,
+        numeroFactura: invInfra.numeroFactura,
+        fechaExpedicion: '2026-03-01'
+      },
+      huella: {
+        ...latest.huella,
+        hash: hashRes.hash,
+        cadenaTextoCanonico: hashRes.canonicalString
+      },
+      encadenamiento: {
+        primerRegistro: false,
+        registroAnterior: {
+          idEmisorFactura: OBLIGADO_TEST_A,
+          numSerieFactura: latest.factura.numeroFactura,
+          fechaExpedicionFactura: latest.factura.fechaExpedicion,
+          huella: latest.huella.hash
+        }
+      },
+      fechaHoraHusoGenRegistro: '2026-03-01T12:00:00+01:00'
+    };
+
+    // 1. Debe rechazar con el error de Firestore SIN caer a archivos compartidos
+    await assert.rejects(async () => {
+      await CloudDistributedChainCoordinator.commitRecord(testRecord);
+    }, /Firestore gRPC transport connection broken/);
+
+    // 2. BackendFiscalCustody.saveFiscalRecord DEBE abortar inmediatamente (Fail-Closed)
+    // sin guardar nada en la caché local ni en disco
+    await assert.rejects(async () => {
+      await BackendFiscalCustody.saveFiscalRecord(testRecord);
+    }, /Firestore gRPC transport connection broken/);
+
+    assert.strictEqual(
+      BackendFiscalCustody.getFiscalRecordById(testRecord.id),
+      null,
+      'El registro NO debe guardarse localmente si la autoridad de nube falló'
+    );
+
+    // Restaurar modo
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(null);
+    CloudDistributedChainCoordinator.setMode(null);
+  });
+
+  await runAdversarialTest('5.2: getLatestFiscalRecordAsync propaga error de Firestore y NO cae a caché o disco local', async () => {
+    CloudDistributedChainCoordinator.setMode('firestore');
+
+    const mockFaultyFirestore = {
+      collection: () => ({
+        doc: () => ({
+          get: async () => {
+            throw new Error('DEADLINE_EXCEEDED: Firestore timeout contactando autoridad');
+          }
+        })
+      })
+    };
+
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(mockFaultyFirestore as any);
+
+    // Debe arrojar el error y NO devolver ningún registro de disco local
+    await assert.rejects(async () => {
+      await BackendFiscalCustody.getLatestFiscalRecordAsync(OBLIGADO_TEST_A);
+    }, /DEADLINE_EXCEEDED/);
+
+    // Restaurar modo
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(null);
+    CloudDistributedChainCoordinator.setMode(null);
+  });
+
+  await runAdversarialTest('5.3: Discrepancia entre nube (génesis) y disco local (registros huérfanos) aborta la emisión', async () => {
+    // Si la autoridad en nube devuelve null (sin registros), pero en disco local hay registros, debe abortar
+    CloudDistributedChainCoordinator.setMode('firestore');
+
+    const mockCleanCloud = {
+      collection: () => ({
+        doc: () => ({
+          get: async () => ({ exists: false, data: () => null })
+        })
+      })
+    };
+
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(mockCleanCloud as any);
+
+    // OBLIGADO_TEST_A ya tiene registros en la custodia local emitidos en tests anteriores
+    await assert.rejects(async () => {
+      await BackendFiscalCustody.getLatestFiscalRecordAsync(OBLIGADO_TEST_A);
+    }, /Discrepancia crítica de autoridad fiscal/);
+
+    // Restaurar modo
+    CloudDistributedChainCoordinator.setFirestoreAdminInstance(null);
+    CloudDistributedChainCoordinator.setMode(null);
+  });
+
+  await runAdversarialTest('5.4: En entorno de producción (NODE_ENV=production), modo simulator está prohibido', async () => {
+    const originalEnv = process.env.NODE_ENV;
+    try {
+      process.env.NODE_ENV = 'production';
+      CloudDistributedChainCoordinator.setMode('simulator');
+
+      await assert.rejects(async () => {
+        await CloudDistributedChainCoordinator.commitRecord({} as any);
+      }, /Prohibido utilizar modo simulator en entorno de producción Cloud Run/);
+    } finally {
+      process.env.NODE_ENV = originalEnv;
+      CloudDistributedChainCoordinator.setMode(null);
+    }
+  });
+
   // Limpieza final de estados de prueba
   BackendFiscalCustody.resetCustody();
   CloudDistributedChainCoordinator.resetCloudState();

@@ -31,6 +31,25 @@ export interface CloudChainState {
 let firestoreAdminInstance: Firestore | null = null;
 let firestoreInitialized = false;
 
+export type CoordinatorMode = 'firestore' | 'simulator';
+let modeOverride: CoordinatorMode | null = null;
+
+export function getCoordinatorMode(): CoordinatorMode {
+  if (modeOverride) return modeOverride;
+  if (process.env.FISCAL_COORDINATOR_MODE === 'firestore') return 'firestore';
+  if (process.env.FISCAL_COORDINATOR_MODE === 'simulator') return 'simulator';
+  // En producción (NODE_ENV=production) o con flag explícito, Firestore es obligatorio y exclusivo
+  if (process.env.NODE_ENV === 'production' || process.env.USE_FIRESTORE_AUTHORITY === 'true') {
+    return 'firestore';
+  }
+  // Si se configuró host de emulador de Firestore
+  if (process.env.FIRESTORE_EMULATOR_HOST) {
+    return 'firestore';
+  }
+  // En local testing o desarrollo sin Firestore configurado, modo simulator
+  return 'simulator';
+}
+
 function getFirestoreAdmin(): Firestore | null {
   if (firestoreInitialized) return firestoreAdminInstance;
   firestoreInitialized = true;
@@ -40,7 +59,7 @@ function getFirestoreAdmin(): Firestore | null {
       databaseId: firebaseConfig.firestoreDatabaseId
     });
   } catch (err: any) {
-    console.warn('CloudDistributedChainCoordinator: Firestore Admin no inicializado con ADC (modo emulado/fallback):', err.message || err);
+    console.warn('CloudDistributedChainCoordinator: Firestore Admin no inicializado con ADC:', err.message || err);
     firestoreAdminInstance = null;
   }
   return firestoreAdminInstance;
@@ -174,115 +193,164 @@ function readSharedCloudRecord(recordId: string): FiscalRecord | null {
 
 export class CloudDistributedChainCoordinator {
   /**
+   * Permite fijar explícitamente el modo del coordinador (exclusivo para pruebas forenses).
+   */
+  public static setMode(mode: CoordinatorMode | null): void {
+    modeOverride = mode;
+  }
+
+  /**
+   * Obtiene el modo de coordinación activo ('firestore' | 'simulator').
+   */
+  public static getMode(): CoordinatorMode {
+    return getCoordinatorMode();
+  }
+
+  /**
+   * Permite inyectar o limpiar la instancia de Firestore Admin (para tests de inyección de fallos).
+   */
+  public static setFirestoreAdminInstance(instance: Firestore | null): void {
+    firestoreAdminInstance = instance;
+    firestoreInitialized = true;
+  }
+
+  /**
    * Ejecuta la validación y el compromiso atómico de un FiscalRecord contra la autoridad compartida de la nube.
    * Si dos instancias compiten para el mismo obligado, solo una se compromete y la otra detecta la discrepancia.
+   *
+   * POLÍTICA FAIL-CLOSED ESTRICTA:
+   * En modo 'firestore', cualquier error (bifurcación, violación de encadenamiento, fallo de red,
+   * timeout o indisponibilidad) LANZA EXCEPCIÓN DIRECTA.
+   * Queda terminantemente PROHIBIDO degradarse a archivos locales en caso de fallo de Firestore.
    */
   public static async commitRecord(record: FiscalRecord): Promise<{ state: CloudChainState }> {
-    const firestore = getFirestoreAdmin();
+    const mode = getCoordinatorMode();
 
-    if (firestore) {
-      try {
-        const stateRef = firestore.collection('fiscal_chain_state').doc(record.obligadoTributarioId);
-        const recordRef = firestore.collection('fiscal_records').doc(record.id);
-
-        const resultState = await firestore.runTransaction(async (tx) => {
-          const [stateSnap, recordSnap] = await Promise.all([
-            tx.get(stateRef),
-            tx.get(recordRef)
-          ]);
-
-          if (recordSnap.exists) {
-            throw new Error(`CloudDistributedChainCoordinator: Violación de inmutabilidad. El registro ${record.id} ya existe en Firestore.`);
-          }
-
-          let newState: CloudChainState;
-          if (stateSnap.exists) {
-            const current = stateSnap.data() as CloudChainState;
-            if (record.encadenamiento.primerRegistro) {
-              throw new Error(`CloudDistributedChainCoordinator: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen registros en Firestore para el obligado ${record.obligadoTributarioId}.`);
-            }
-            if (record.encadenamiento.registroAnterior?.huella !== current.latestHuella) {
-              throw new Error(`CloudDistributedChainCoordinator: Bifurcación de cadena detectada en Firestore. El hash del registro anterior (${record.encadenamiento.registroAnterior?.huella}) no coincide con el último registro en la nube (${current.latestHuella}).`);
-            }
-
-            newState = {
-              obligadoTributarioId: record.obligadoTributarioId,
-              latestRecordId: record.id,
-              latestHuella: record.huella.hash,
-              latestNumeroFactura: record.factura.numeroFactura,
-              latestFecha: record.factura.fechaExpedicion,
-              totalRecords: (current.totalRecords || 0) + 1,
-              sequence: (current.sequence || 0) + 1,
-              updatedAt: new Date().toISOString()
-            };
-            tx.update(stateRef, newState as any);
-          } else {
-            if (!record.encadenamiento.primerRegistro) {
-              throw new Error(`CloudDistributedChainCoordinator: Violación de encadenamiento. No existe estado previo en Firestore para el obligado ${record.obligadoTributarioId}.`);
-            }
-
-            newState = {
-              obligadoTributarioId: record.obligadoTributarioId,
-              latestRecordId: record.id,
-              latestHuella: record.huella.hash,
-              latestNumeroFactura: record.factura.numeroFactura,
-              latestFecha: record.factura.fechaExpedicion,
-              totalRecords: 1,
-              sequence: 1,
-              updatedAt: new Date().toISOString()
-            };
-            tx.set(stateRef, newState as any);
-          }
-
-          tx.set(recordRef, JSON.parse(JSON.stringify(record)));
-          return newState;
-        });
-
-        return { state: resultState };
-      } catch (err: any) {
-        if (err.message?.includes('Violación de encadenamiento') ||
-            err.message?.includes('Bifurcación de cadena') ||
-            err.message?.includes('Violación de inmutabilidad')) {
-          throw err;
-        }
-        // Si no hay conexión gRPC disponible en test local, cae en el coordinador compartido
+    if (mode === 'firestore') {
+      const firestore = getFirestoreAdmin();
+      if (!firestore) {
+        throw new Error(
+          'CloudDistributedChainCoordinator: Error fatal de infraestructura. Firestore Admin no está configurado ni disponible en modo firestore. No se permite degradación a disco local (Fail-Closed).'
+        );
       }
+
+      const stateRef = firestore.collection('fiscal_chain_state').doc(record.obligadoTributarioId);
+      const recordRef = firestore.collection('fiscal_records').doc(record.id);
+
+      // runTransaction ejecuta con Optimistic Concurrency Control (OCC) en Google Cloud Firestore.
+      // Cualquier fallo en la transacción se propaga inmediatamente (Fail-Closed).
+      const resultState = await firestore.runTransaction(async (tx) => {
+        const [stateSnap, recordSnap] = await Promise.all([
+          tx.get(stateRef),
+          tx.get(recordRef)
+        ]);
+
+        if (recordSnap.exists) {
+          throw new Error(`CloudDistributedChainCoordinator: Violación de inmutabilidad. El registro ${record.id} ya existe en Firestore.`);
+        }
+
+        let newState: CloudChainState;
+        if (stateSnap.exists) {
+          const current = stateSnap.data() as CloudChainState;
+          if (record.encadenamiento.primerRegistro) {
+            throw new Error(`CloudDistributedChainCoordinator: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen registros en Firestore para el obligado ${record.obligadoTributarioId}.`);
+          }
+          if (record.encadenamiento.registroAnterior?.huella !== current.latestHuella) {
+            throw new Error(`CloudDistributedChainCoordinator: Bifurcación de cadena detectada en Firestore. El hash del registro anterior (${record.encadenamiento.registroAnterior?.huella}) no coincide con el último registro en la nube (${current.latestHuella}).`);
+          }
+
+          newState = {
+            obligadoTributarioId: record.obligadoTributarioId,
+            latestRecordId: record.id,
+            latestHuella: record.huella.hash,
+            latestNumeroFactura: record.factura.numeroFactura,
+            latestFecha: record.factura.fechaExpedicion,
+            totalRecords: (current.totalRecords || 0) + 1,
+            sequence: (current.sequence || 0) + 1,
+            updatedAt: new Date().toISOString()
+          };
+          tx.update(stateRef, newState as any);
+        } else {
+          if (!record.encadenamiento.primerRegistro) {
+            throw new Error(`CloudDistributedChainCoordinator: Violación de encadenamiento. No existe estado previo en Firestore para el obligado ${record.obligadoTributarioId}.`);
+          }
+
+          newState = {
+            obligadoTributarioId: record.obligadoTributarioId,
+            latestRecordId: record.id,
+            latestHuella: record.huella.hash,
+            latestNumeroFactura: record.factura.numeroFactura,
+            latestFecha: record.factura.fechaExpedicion,
+            totalRecords: 1,
+            sequence: 1,
+            updatedAt: new Date().toISOString()
+          };
+          tx.set(stateRef, newState as any);
+        }
+
+        tx.set(recordRef, JSON.parse(JSON.stringify(record)));
+        return newState;
+      });
+
+      return { state: resultState };
     }
 
-    // Coordinador de estado compartido atómico (garantía de concurrencia entre procesos independientes)
+    // Modo 'simulator': Exclusivo para entornos de prueba offline/desarrollo local
+    if (process.env.NODE_ENV === 'production') {
+      throw new Error(
+        'CloudDistributedChainCoordinator: Prohibido utilizar modo simulator en entorno de producción Cloud Run (Fail-Closed).'
+      );
+    }
+
     const newState = commitSharedCloudTransaction(record);
     return { state: newState };
   }
 
   /**
    * Obtiene el estado oficial de la cadena en la nube para un obligado tributario.
+   * En modo firestore, NUNCA cae a disco local si Firestore devuelve error o no responde.
    */
   public static async getLatestState(obligadoId: string): Promise<CloudChainState | null> {
-    const firestore = getFirestoreAdmin();
-    if (firestore) {
-      try {
-        const snap = await firestore.collection('fiscal_chain_state').doc(obligadoId).get();
-        if (snap.exists) {
-          return snap.data() as CloudChainState;
-        }
-      } catch {}
+    const mode = getCoordinatorMode();
+
+    if (mode === 'firestore') {
+      const firestore = getFirestoreAdmin();
+      if (!firestore) {
+        throw new Error(
+          'CloudDistributedChainCoordinator: Firestore Admin no disponible en modo firestore para getLatestState (Fail-Closed).'
+        );
+      }
+      const snap = await firestore.collection('fiscal_chain_state').doc(obligadoId).get();
+      if (snap.exists) {
+        return snap.data() as CloudChainState;
+      }
+      return null;
     }
+
     return readSharedCloudState(obligadoId);
   }
 
   /**
    * Recupera un FiscalRecord por ID desde la autoridad distribuida en la nube.
+   * En modo firestore, NUNCA cae a disco local si Firestore devuelve error.
    */
   public static async getRecordById(recordId: string): Promise<FiscalRecord | null> {
-    const firestore = getFirestoreAdmin();
-    if (firestore) {
-      try {
-        const snap = await firestore.collection('fiscal_records').doc(recordId).get();
-        if (snap.exists) {
-          return snap.data() as FiscalRecord;
-        }
-      } catch {}
+    const mode = getCoordinatorMode();
+
+    if (mode === 'firestore') {
+      const firestore = getFirestoreAdmin();
+      if (!firestore) {
+        throw new Error(
+          'CloudDistributedChainCoordinator: Firestore Admin no disponible en modo firestore para getRecordById (Fail-Closed).'
+        );
+      }
+      const snap = await firestore.collection('fiscal_records').doc(recordId).get();
+      if (snap.exists) {
+        return snap.data() as FiscalRecord;
+      }
+      return null;
     }
+
     return readSharedCloudRecord(recordId);
   }
 
