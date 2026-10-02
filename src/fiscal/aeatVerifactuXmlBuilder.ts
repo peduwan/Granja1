@@ -290,6 +290,11 @@ export function buildRegistroAltaXml(record: FiscalRecord): string {
   lines.push(`        <sf:FechaExpedicionFactura>${escapeXml(fechaExpedicion)}</sf:FechaExpedicionFactura>`);
   lines.push('      </sf:IDFactura>');
 
+  // RefExterna es opcional y no interviene en la huella; se usa para correlación/idempotencia.
+  if (record.referenciaExterna) {
+    lines.push(`      <sf:RefExterna>${escapeXml(validateRequiredString(record.referenciaExterna, 'RegistroAlta.RefExterna', 60))}</sf:RefExterna>`);
+  }
+
   // 3. NombreRazonEmisor
   lines.push(`      <sf:NombreRazonEmisor>${escapeXml(nombreRazonEmisor)}</sf:NombreRazonEmisor>`);
 
@@ -427,6 +432,9 @@ export function buildRegistroAnulacionXml(record: FiscalRecord): string {
   lines.push(`        <sf:NumSerieFacturaAnulada>${escapeXml(numAnulada)}</sf:NumSerieFacturaAnulada>`);
   lines.push(`        <sf:FechaExpedicionFacturaAnulada>${escapeXml(fechaAnulada)}</sf:FechaExpedicionFacturaAnulada>`);
   lines.push('      </sf:IDFactura>');
+  if (record.referenciaExterna) {
+    lines.push(`      <sf:RefExterna>${escapeXml(validateRequiredString(record.referenciaExterna, 'RegistroAnulacion.RefExterna', 60))}</sf:RefExterna>`);
+  }
 
   // 3. Encadenamiento
   lines.push(buildEncadenamientoXml(record));
