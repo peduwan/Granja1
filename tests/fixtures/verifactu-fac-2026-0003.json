@@ -1,0 +1,37 @@
+{
+  "emisor": {
+    "nombre": "L'orbayu",
+    "nif": "53541125T"
+  },
+  "cliente": {
+    "nombre": "Supermercado La Despensa Verde S.L.",
+    "nif": "B45892341"
+  },
+  "factura": {
+    "numero": "FAC-2026-0003",
+    "fecha": "2026-09-22",
+    "tipo": "F1",
+    "base": "88.00",
+    "iva": "4",
+    "cuota": "3.52",
+    "total": "91.52"
+  },
+  "lineas": [
+    {
+      "cantidad": 10,
+      "precioUnitario": "4.40"
+    },
+    {
+      "cantidad": 5,
+      "precioUnitario": "4.40"
+    },
+    {
+      "cantidad": 5,
+      "precioUnitario": "4.40"
+    }
+  ],
+  "negocio": {
+    "loteEnvasado": "ENV-2026-0005",
+    "lotePuesta": "L-20261019"
+  }
+}
