@@ -222,7 +222,7 @@ async function executeEmitFiscalInvoice(
       if (typeof window === 'undefined') {
         try {
           const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-          const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+          const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
           previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
             candidateRefs: params.existingRecordRefs
           });
@@ -479,7 +479,7 @@ async function executeEmitFiscalAnulacion(
       if (typeof window === 'undefined') {
         try {
           const { BackendFiscalCustody } = await import('./backendCustodyRepository');
-          const latestFromCustody = BackendFiscalCustody.getLatestFiscalRecord(obligadoTributarioId);
+          const latestFromCustody = await BackendFiscalCustody.getLatestFiscalRecordAsync(obligadoTributarioId);
           previousRecord = latestFromCustody || getLastFiscalRecord(obligadoTributarioId, {
             candidateRefs: params.existingRecordRefs
           });

@@ -22,7 +22,8 @@ import { auth } from '../utils/firebase';
  */
 export async function emitFiscalInvoiceViaBackend(params: {
   invoiceDraft: Factura;
-  fiscalConfig: FiscalConfiguration;
+  fiscalConfig?: FiscalConfiguration;
+  obligadoTributarioId?: string;
 }): Promise<{
   success: boolean;
   invoice: Factura;
@@ -45,7 +46,7 @@ export async function emitFiscalInvoiceViaBackend(params: {
     },
     body: JSON.stringify({
       invoiceDraft: params.invoiceDraft,
-      fiscalConfig: params.fiscalConfig
+      obligadoTributarioId: params.obligadoTributarioId || params.fiscalConfig?.obligadoTributarioId || params.fiscalConfig?.nifEmisor
     })
   });
 

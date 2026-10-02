@@ -10,9 +10,10 @@
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
-    "test": "tsx tests/fase1.test.ts && tsx tests/fase2_1.test.ts && tsx tests/fase2_2.test.ts && tsx tests/fase2_3.test.ts && tsx tests/fase3_1.test.ts && tsx tests/fase3_1_1.test.ts && tsx tests/fase3_1_2.test.ts && tsx tests/fase3_1_3.test.ts && tsx tests/fase3_1_4.test.ts && tsx tests/auditoria_seguridad_exhaustiva.test.ts && tsx tests/fase3_1_5_cloud_resilience.test.ts"
+    "test": "tsx tests/fase1.test.ts && tsx tests/fase2_1.test.ts && tsx tests/fase2_2.test.ts && tsx tests/fase2_3.test.ts && tsx tests/fase3_1.test.ts && tsx tests/fase3_1_1.test.ts && tsx tests/fase3_1_2.test.ts && tsx tests/fase3_1_3.test.ts && tsx tests/fase3_1_4.test.ts && tsx tests/auditoria_seguridad_exhaustiva.test.ts && tsx tests/fase3_1_5_cloud_resilience.test.ts && tsx tests/fase3_1_6_autoridad_y_resiliencia.test.ts && tsx tests/auditoria_forense_adversarial.test.ts"
   },
   "dependencies": {
+    "@google-cloud/firestore": "^9.3.0",
     "@google/genai": "^2.4.0",
     "@tailwindcss/vite": "^4.3.3",
     "@vitejs/plugin-react": "^6.1.1",

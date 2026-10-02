@@ -47,34 +47,30 @@ service cloud.firestore {
       allow write: if false;
     }
 
-    // Arquitectura SIF Inmutable (RD 1007/2023 y Orden HAC/1177/2024)
-    // Inmutabilidad estricta: Una vez creado el registro, se prohíbe cualquier alteración o borrado.
-    // Creación autorizada únicamente para usuarios verificados en el backend / autorizados.
+    // Arquitectura SIF (Fase 3.1.6): Autoridad Exclusiva de Backend
+    // Prohibida estrictamente cualquier escritura directa desde el cliente web SDK.
+    // Solo lectura para usuarios autorizados. La emisión, sellado y custodia residen exclusivamente en backend.
     match /fiscal_records/{recordId} {
       allow read: if isAuthorizedUser();
-      allow create: if isAuthorizedUser();
-      allow update, delete: if false;
+      allow write: if false;
     }
 
-    // Cerrojo distribuido y estado de cadena por obligado tributario (Cloud Run Multi-Instancia)
+    // Cerrojo distribuido y estado de cadena por obligado tributario (Gestionado exclusivamente por Backend)
     match /fiscal_chain_state/{obligadoId} {
       allow read: if isAuthorizedUser();
-      allow write: if isAuthorizedUser();
+      allow write: if false;
     }
 
-    // Historial y Cola Outbox de Sumisiones AEAT (Inmutable en borrado)
+    // Historial y Cola Outbox de Sumisiones AEAT (Gestionado exclusivamente por Backend)
     match /fiscal_submissions/{submissionId} {
       allow read: if isAuthorizedUser();
-      allow create: if isAuthorizedUser();
-      allow update: if isAuthorizedUser();
-      allow delete: if false;
+      allow write: if false;
     }
 
-    // Libro de Auditoría de Eventos del SIF (Estrictamente Inmutable)
+    // Libro de Auditoría de Eventos del SIF (Inmutable: Gestionado exclusivamente por Backend)
     match /fiscal_events/{eventId} {
       allow read: if isAuthorizedUser();
-      allow create: if isAuthorizedUser();
-      allow update, delete: if false;
+      allow write: if false;
     }
   }
 }

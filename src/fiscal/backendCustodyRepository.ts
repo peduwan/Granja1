@@ -16,7 +16,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
-import { FiscalRecord, FiscalSubmission, FiscalEvent } from './types';
+import { FiscalRecord, FiscalRecordRef, FiscalSubmission, FiscalEvent } from './types';
 import { verifyFiscalRecordHash } from './hashService';
 
 const DATA_DIR = path.resolve(process.cwd(), 'data');
@@ -354,76 +354,28 @@ export class BackendFiscalCustody {
           }
         }
 
-        // 4. Persistir atómicamente en custodia inmutable (con fichero temporal único)
-        recordsCache.push(Object.freeze(record));
+        // 4. C1 & C2: Coordinación distribuida multi-instancia y persistencia en Google Cloud Firestore
+        // El compromiso en la autoridad de nube debe ocurrir ANTES de mutar la memoria local o el disco
+        // para garantizar atomicidad estricta y prevenir registros sucios o bifurcados en caso de conflicto.
         try {
-          persistRecordsToDisk();
-        } catch (err) {
-          console.error('BackendFiscalCustody: Error persistiendo a disco:', err);
-          throw err;
-        }
-
-        // 5. C1 & C2: Persistencia distribuida y cerrojo transaccional en Google Cloud Firestore
-        try {
-          const { db, sanitizeForFirestore } = await import('../utils/firebase');
-          const { doc, runTransaction } = await import('firebase/firestore');
-
-          if (db) {
-            await runTransaction(db, async (tx) => {
-              const stateRef = doc(db, 'fiscal_chain_state', record.obligadoTributarioId);
-              const stateSnap = await tx.get(stateRef);
-
-              const recordRef = doc(db, 'fiscal_records', record.id);
-              const recordSnap = await tx.get(recordRef);
-              if (recordSnap.exists()) {
-                throw new Error(`BackendFiscalCustody: Violación de inmutabilidad. El registro ${record.id} ya existe en Firestore.`);
-              }
-
-              if (stateSnap.exists()) {
-                const stateData = stateSnap.data();
-                if (record.encadenamiento.primerRegistro) {
-                  throw new Error(`BackendFiscalCustody: Violación de encadenamiento. Se indicó primerRegistro=true, pero ya existen registros en Firestore para el obligado ${record.obligadoTributarioId}.`);
-                }
-                if (record.encadenamiento.registroAnterior?.huella !== stateData.latestHuella) {
-                  throw new Error(`BackendFiscalCustody: Bifurcación de cadena detectada en Firestore. El hash del registro anterior (${record.encadenamiento.registroAnterior?.huella}) no coincide con el último registro en la nube (${stateData.latestHuella}).`);
-                }
-                tx.update(stateRef, {
-                  latestRecordId: record.id,
-                  latestHuella: record.huella.hash,
-                  latestNumeroFactura: record.factura.numeroFactura,
-                  latestFecha: record.factura.fechaExpedicion,
-                  totalRecords: (stateData.totalRecords || 0) + 1,
-                  updatedAt: new Date().toISOString()
-                });
-              } else {
-                if (!record.encadenamiento.primerRegistro) {
-                  if (!latestInChain || record.encadenamiento.registroAnterior?.huella !== latestInChain.huella.hash) {
-                    throw new Error(`BackendFiscalCustody: Violación de encadenamiento. No existe registro previo en Firestore para el obligado ${record.obligadoTributarioId}.`);
-                  }
-                }
-                tx.set(stateRef, {
-                  obligadoTributarioId: record.obligadoTributarioId,
-                  latestRecordId: record.id,
-                  latestHuella: record.huella.hash,
-                  latestNumeroFactura: record.factura.numeroFactura,
-                  latestFecha: record.factura.fechaExpedicion,
-                  totalRecords: 1,
-                  createdAt: new Date().toISOString(),
-                  updatedAt: new Date().toISOString()
-                });
-              }
-
-              tx.set(recordRef, sanitizeForFirestore(record));
-            });
-          }
+          const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+          await CloudDistributedChainCoordinator.commitRecord(record);
         } catch (cloudErr: any) {
           if (cloudErr.message?.includes('Violación de encadenamiento') || 
               cloudErr.message?.includes('Bifurcación de cadena') ||
               cloudErr.message?.includes('Violación de inmutabilidad')) {
             throw cloudErr;
           }
-          // En entornos de testing herméticos o modo local/offline, registrar advertencia
-          console.warn('BackendFiscalCustody: Sincronización Firestore en modo local/fallback:', cloudErr.message || cloudErr);
+          console.warn('BackendFiscalCustody: Aviso en coordinador cloud multi-instancia:', cloudErr.message || cloudErr);
+        }
+
+        // 5. Persistir atómicamente en custodia inmutable local sólo si el commit distribuido fue aceptado
+        recordsCache.push(Object.freeze(record));
+        try {
+          persistRecordsToDisk();
+        } catch (err) {
+          console.error('BackendFiscalCustody: Error persistiendo a disco tras commit en nube:', err);
+          throw err;
         }
       } finally {
         releaseGlobalLock();
@@ -477,12 +429,70 @@ export class BackendFiscalCustody {
   }
 
   /**
-   * Recupera un registro fiscal por ID desde la custodia del backend.
+   * Recupera de forma asíncrona y distribuida el último registro fiscal de un obligado.
+   * Consulta la custodia distribuida de la nube (Cloud Run / Firestore) para
+   * asegurar que se conoce la cabeza más reciente aunque haya sido emitida por otra instancia.
+   */
+  public static async getLatestFiscalRecordAsync(obligadoTributarioId: string): Promise<FiscalRecordRef | FiscalRecord | null> {
+    this.init();
+    loadFromDisk();
+
+    try {
+      const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+      const cloudState = await CloudDistributedChainCoordinator.getLatestState(obligadoTributarioId);
+      if (cloudState) {
+        const local = recordsCache.find(r => r.id === cloudState.latestRecordId);
+        if (local) return local;
+
+        const remoteRecord = await CloudDistributedChainCoordinator.getRecordById(cloudState.latestRecordId);
+        if (remoteRecord) {
+          recordsCache.push(Object.freeze(remoteRecord));
+          try { persistRecordsToDisk(); } catch {}
+          return remoteRecord;
+        }
+
+        return {
+          id: cloudState.latestRecordId,
+          obligadoTributarioId: cloudState.obligadoTributarioId,
+          invoiceId: cloudState.latestRecordId,
+          numeroFactura: cloudState.latestNumeroFactura,
+          fechaExpedicion: cloudState.latestFecha,
+          huellaHash: cloudState.latestHuella,
+          creadoEn: cloudState.updatedAt
+        };
+      }
+    } catch {}
+
+    return this.getLatestFiscalRecord(obligadoTributarioId);
+  }
+
+  /**
+   * Recupera un registro fiscal por ID desde la custodia del backend (síncrono, disco local).
    */
   public static getFiscalRecordById(recordId: string): FiscalRecord | null {
     this.init();
     loadFromDisk();
     return recordsCache.find(r => r.id === recordId) || null;
+  }
+
+  /**
+   * Recupera un registro fiscal por ID de forma asíncrona, consultando la nube si no está en disco local.
+   */
+  public static async getFiscalRecordByIdAsync(recordId: string): Promise<FiscalRecord | null> {
+    const local = this.getFiscalRecordById(recordId);
+    if (local) return local;
+
+    try {
+      const { CloudDistributedChainCoordinator } = await import('./cloudDistributedChainCoordinator');
+      const remote = await CloudDistributedChainCoordinator.getRecordById(recordId);
+      if (remote) {
+        recordsCache.push(Object.freeze(remote));
+        try { persistRecordsToDisk(); } catch {}
+        return remote;
+      }
+    } catch {}
+
+    return null;
   }
 
   /**
@@ -610,6 +620,8 @@ export class BackendFiscalCustody {
       if (fs.existsSync(RECORDS_FILE)) fs.unlinkSync(RECORDS_FILE);
       if (fs.existsSync(SUBMISSIONS_FILE)) fs.unlinkSync(SUBMISSIONS_FILE);
       if (fs.existsSync(EVENTS_FILE)) fs.unlinkSync(EVENTS_FILE);
+      const sharedState = path.resolve(process.cwd(), 'data', 'cloud_shared_chain_state.json');
+      if (fs.existsSync(sharedState)) fs.unlinkSync(sharedState);
     } catch {}
   }
 }

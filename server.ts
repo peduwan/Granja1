@@ -12,6 +12,7 @@ import { BackendFiscalCustody } from "./src/fiscal/backendCustodyRepository";
 import { verifyFiscalRecordHash } from "./src/fiscal/hashService";
 import { createFiscalSubmission } from "./src/fiscal/submissionService";
 import { FiscalRecord, FiscalConfiguration } from "./src/fiscal/types";
+import { createDefaultFiscalConfiguration } from "./src/fiscal/modelTransformers";
 import { getAeatSoapEndpoint } from "./src/fiscal/aeatEndpoints";
 import {
   requireFiscalAuthMiddleware,
@@ -836,12 +837,12 @@ INSTRUCCIONES CLAVE:
 // 1. Emisión de Factura Fiscal con autoridad exclusiva en backend
 app.post("/api/fiscal/emit-invoice", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
-    const { invoiceDraft, fiscalConfig } = req.body;
-    if (!invoiceDraft || !fiscalConfig) {
-      return res.status(400).json({ error: "Faltan datos obligatorios: invoiceDraft y fiscalConfig son requeridos." });
+    const { invoiceDraft, fiscalConfig, obligadoTributarioId, nifEmisor } = req.body;
+    if (!invoiceDraft) {
+      return res.status(400).json({ error: "Faltan datos obligatorios: invoiceDraft es requerido." });
     }
 
-    const rawNif = (fiscalConfig.nifEmisor || fiscalConfig.obligadoTributarioId || "").trim().toUpperCase();
+    const rawNif = (obligadoTributarioId || nifEmisor || fiscalConfig?.nifEmisor || fiscalConfig?.obligadoTributarioId || "").trim().toUpperCase();
     if (!rawNif || rawNif === 'ES_UNKNOWN' || rawNif === 'B12345678') {
       return res.status(400).json({ error: "NIF de emisor obligatorio y válido requerido (prohibido vacío, B12345678 o ES_UNKNOWN)." });
     }
@@ -858,15 +859,17 @@ app.post("/api/fiscal/emit-invoice", requireFiscalAuthMiddleware, async (req: Fi
       return res.status(400).json({ error: "numeroFactura y fecha de expedición son obligatorios." });
     }
 
-    const sanitizedConfig = {
-      ...fiscalConfig,
-      nifEmisor: verifiedObligado,
-      obligadoTributarioId: verifiedObligado
-    };
+    // AUTORIDAD EXCLUSIVA DE SERVIDOR (P1):
+    // La configuración fiscal se genera autoritativamente en el backend.
+    // El cliente NO puede forzar modoFiscal, versionEspecificacion, sistemaInformatico ni remisionAutomatica.
+    const serverFiscalConfig = createDefaultFiscalConfiguration({
+      nif: verifiedObligado,
+      nombreRazon: (req.body.nombreRazon || invoiceDraft.emisorNombre || 'Gestión Avícola AgroTech Software S.L.').trim()
+    });
 
     const result = await emitFiscalInvoice({
       invoiceDraft,
-      fiscalConfig: sanitizedConfig,
+      fiscalConfig: serverFiscalConfig,
       persistRecordFn: async (record) => {
         await BackendFiscalCustody.saveFiscalRecord(record);
       }
@@ -887,12 +890,12 @@ app.post("/api/fiscal/emit-invoice", requireFiscalAuthMiddleware, async (req: Fi
 // 2. Emisión de Anulación Fiscal con autoridad exclusiva en backend
 app.post("/api/fiscal/emit-anulacion", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
   try {
-    const { facturaAnulada, fiscalConfig, obligadoTributarioId } = req.body;
-    if (!facturaAnulada || !fiscalConfig) {
-      return res.status(400).json({ error: "Faltan datos obligatorios: facturaAnulada y fiscalConfig son requeridos." });
+    const { facturaAnulada, fiscalConfig, obligadoTributarioId, nifEmisor } = req.body;
+    if (!facturaAnulada) {
+      return res.status(400).json({ error: "Faltan datos obligatorios: facturaAnulada es requerida." });
     }
 
-    const rawObligado = (obligadoTributarioId || fiscalConfig.obligadoTributarioId || fiscalConfig.nifEmisor || "").trim().toUpperCase();
+    const rawObligado = (obligadoTributarioId || nifEmisor || fiscalConfig?.obligadoTributarioId || fiscalConfig?.nifEmisor || "").trim().toUpperCase();
     if (!rawObligado || rawObligado === 'ES_UNKNOWN') {
       return res.status(400).json({ error: "obligadoTributarioId obligatorio y no puede ser ES_UNKNOWN." });
     }
@@ -904,15 +907,14 @@ app.post("/api/fiscal/emit-anulacion", requireFiscalAuthMiddleware, async (req: 
       return res.status(authErr.statusCode || 403).json({ error: authErr.message });
     }
 
-    const sanitizedConfig = {
-      ...fiscalConfig,
-      nifEmisor: verifiedObligado,
-      obligadoTributarioId: verifiedObligado
-    };
+    const serverFiscalConfig = createDefaultFiscalConfiguration({
+      nif: verifiedObligado,
+      nombreRazon: (req.body.nombreRazon || 'Gestión Avícola AgroTech Software S.L.').trim()
+    });
 
     const result = await emitFiscalAnulacion({
       facturaAnulada,
-      fiscalConfig: sanitizedConfig,
+      fiscalConfig: serverFiscalConfig,
       obligadoTributarioId: verifiedObligado,
       persistRecordFn: async (record) => {
         await BackendFiscalCustody.saveFiscalRecord(record);
@@ -946,8 +948,8 @@ app.get("/api/fiscal/records", requireFiscalAuthMiddleware, (req: FiscalAuthenti
   res.json({ records, count: records.length });
 });
 
-app.get("/api/fiscal/records/:id", requireFiscalAuthMiddleware, (req: FiscalAuthenticatedRequest, res) => {
-  const record = BackendFiscalCustody.getFiscalRecordById(req.params.id);
+app.get("/api/fiscal/records/:id", requireFiscalAuthMiddleware, async (req: FiscalAuthenticatedRequest, res) => {
+  const record = await BackendFiscalCustody.getFiscalRecordByIdAsync(req.params.id);
   if (!record) {
     return res.status(404).json({ error: `FiscalRecord '${req.params.id}' no encontrado en custodia de backend.` });
   }
@@ -1020,7 +1022,7 @@ app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAu
       });
     }
 
-    const recordToSubmit = BackendFiscalCustody.getFiscalRecordById(fiscalRecordId);
+    const recordToSubmit = await BackendFiscalCustody.getFiscalRecordByIdAsync(fiscalRecordId);
     if (!recordToSubmit) {
       return res.status(404).json({
         error: `FiscalRecord con id '${fiscalRecordId}' no encontrado en la custodia fiscal del backend. Solo pueden remitirse registros legítimos previamente emitidos.`
@@ -1046,8 +1048,24 @@ app.post("/api/fiscal/submit", requireFiscalAuthMiddleware, async (req: FiscalAu
     const serverFiscalConfig = getServerFiscalConfig(recordToSubmit);
     const serverSubmission = createFiscalSubmission(recordToSubmit, serverFiscalConfig);
 
-    // 5. Transporte estrictamente confiable
-    const serverTransportMode = process.env.AEAT_TRANSPORT_MODE || (AeatCertificateProvider.hasCertificate() ? 'real' : 'mock');
+    // 5. Transporte estrictamente confiable con FAIL-CLOSED en producción (P1 / Punto 10)
+    const isProduction = process.env.NODE_ENV === 'production';
+    if (isProduction) {
+      if (!AeatCertificateProvider.hasCertificate()) {
+        return res.status(500).json({
+          error: "ERROR FATAL DE SEGURIDAD FISCAL: En entorno de producción (NODE_ENV=production) es estrictamente obligatorio disponer de certificado mTLS válido de servidor para comunicarse con la AEAT. Queda terminantemente prohibido el modo mock por omisión."
+        });
+      }
+      if (process.env.AEAT_TRANSPORT_MODE === 'mock') {
+        return res.status(500).json({
+          error: "ERROR FATAL DE SEGURIDAD FISCAL: AEAT_TRANSPORT_MODE=mock está terminantemente prohibido en entorno de producción."
+        });
+      }
+    }
+
+    const serverTransportMode = isProduction
+      ? 'real'
+      : (process.env.AEAT_TRANSPORT_MODE || (AeatCertificateProvider.hasCertificate() ? 'real' : 'mock'));
 
     const result = await executeAeatSubmission({
       submission: serverSubmission,
