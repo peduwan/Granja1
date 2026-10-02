@@ -59,6 +59,8 @@ export interface FiscalRecord {
   readonly id: string; // Identificador unívoco del registro fiscal
   readonly obligadoTributarioId: string; // Identificador inequívoco del obligado tributario titular de la cadena
   readonly invoiceId: string; // Enlace 1:1 con la Factura Comercial
+  /** Referencia estable del registro para correlación/duplicados; se serializa como RefExterna y no forma parte de la huella. */
+  readonly referenciaExterna?: string;
   readonly tipoRegistro: TipoRegistroFiscal; // 'alta' | 'anulacion'
   readonly modoFiscal: FiscalMode; // 'VERI_FACTU' | 'NO_VERI_FACTU'
   readonly versionEspecificacion: string; // '1.0'

@@ -226,9 +226,12 @@ function buildDesgloseXml(desgloseIVA: readonly DesgloseIvaFiscal[]): string {
   lines.push('      <sf:Desglose>');
 
   for (const item of desgloseIVA) {
-    const impuesto = item.impuesto || '01'; // 01 = IVA
-    const claveRegimen = item.claveRegimen || '01'; // 01 = Régimen general
-    const calificacion = item.calificacionOperacion || 'S1'; // S1 = Sujeta y no exenta sin ISP
+    const impuesto = item.impuesto;
+    const claveRegimen = item.claveRegimen;
+    const calificacion = item.calificacionOperacion;
+    if (!impuesto || !claveRegimen || (!calificacion && !item.operacionExenta)) {
+      throw new Error('aeatVerifactuXmlBuilder: el desglose fiscal requiere Impuesto, ClaveRegimen y CalificacionOperacion/OperacionExenta determinados por el modelo fiscal; no se permiten valores por defecto.');
+    }
     const base = formatImporteFiscal(item.baseImponible);
     const cuota = formatImporteFiscal(item.cuotaRepercutida);
     const tipo = item.tipoImpositivo !== undefined ? Number(item.tipoImpositivo).toFixed(2) : undefined;
@@ -289,6 +292,11 @@ export function buildRegistroAltaXml(record: FiscalRecord): string {
   lines.push(`        <sf:NumSerieFactura>${escapeXml(numeroFactura)}</sf:NumSerieFactura>`);
   lines.push(`        <sf:FechaExpedicionFactura>${escapeXml(fechaExpedicion)}</sf:FechaExpedicionFactura>`);
   lines.push('      </sf:IDFactura>');
+
+  // RefExterna es opcional y no interviene en la huella; se usa para correlación/idempotencia.
+  if (record.referenciaExterna) {
+    lines.push(`      <sf:RefExterna>${escapeXml(validateRequiredString(record.referenciaExterna, 'RegistroAlta.RefExterna', 60))}</sf:RefExterna>`);
+  }
 
   // 3. NombreRazonEmisor
   lines.push(`      <sf:NombreRazonEmisor>${escapeXml(nombreRazonEmisor)}</sf:NombreRazonEmisor>`);
@@ -427,6 +435,9 @@ export function buildRegistroAnulacionXml(record: FiscalRecord): string {
   lines.push(`        <sf:NumSerieFacturaAnulada>${escapeXml(numAnulada)}</sf:NumSerieFacturaAnulada>`);
   lines.push(`        <sf:FechaExpedicionFacturaAnulada>${escapeXml(fechaAnulada)}</sf:FechaExpedicionFacturaAnulada>`);
   lines.push('      </sf:IDFactura>');
+  if (record.referenciaExterna) {
+    lines.push(`      <sf:RefExterna>${escapeXml(validateRequiredString(record.referenciaExterna, 'RegistroAnulacion.RefExterna', 60))}</sf:RefExterna>`);
+  }
 
   // 3. Encadenamiento
   lines.push(buildEncadenamientoXml(record));
