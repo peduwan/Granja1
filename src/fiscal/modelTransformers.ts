@@ -157,6 +157,7 @@ export function createFiscalRecordFromInvoice(
     id: `frec-${invoice.id || Date.now()}`,
     obligadoTributarioId,
     invoiceId: invoice.id,
+    referenciaExterna: invoice.id,
     tipoRegistro: 'alta',
     modoFiscal: config.modalidad,
     versionEspecificacion: config.versionEspecificacion || '1.0',
@@ -337,6 +338,7 @@ export function createFiscalAnulacionRecord(
     id: `fanul-${facturaAnulada.numeroFactura}-${Date.now()}`,
     obligadoTributarioId,
     invoiceId: `inv-anul-${facturaAnulada.numeroFactura}`,
+    referenciaExterna: `ANUL-${facturaAnulada.numeroFactura}`,
     tipoRegistro: 'anulacion',
     modoFiscal: config.modalidad,
     versionEspecificacion: config.versionEspecificacion || '1.0',
@@ -454,6 +456,35 @@ export function createFiscalEvent(params: {
  * Configuración fiscal por defecto
 
  */
+function resolveSistemaInformaticoFiscal(): FiscalConfiguration['sistemaInformatico'] {
+  const isTest = process.env.NODE_ENV === 'test';
+  const value = (name: string, testValue?: string): string => {
+    const env = process.env[name]?.trim();
+    if (env) return env;
+    if (isTest && testValue) return testValue;
+    throw new Error(
+      `Configuración SIF incompleta: falta ${name}. Estos datos identificativos deben ser estables y configurarse en el servidor; no se permiten valores fiscales inventados.`
+    );
+  };
+  const si = (name: string, testValue: 'S'|'N'): 'S'|'N' => {
+    const env = process.env[name]?.trim().toUpperCase();
+    if (env === 'S' || env === 'N') return env;
+    if (isTest) return testValue;
+    throw new Error(`Configuración SIF incompleta: ${name} debe ser S o N.`);
+  };
+  return {
+    nombreRazon: value('SIF_PRODUCER_NAME', 'TEST SIF PRODUCER'),
+    nif: value('SIF_PRODUCER_NIF', 'TEST00001'),
+    nombreSistemaInformatico: value('SIF_NAME', 'Granja Test SIF'),
+    idSistemaInformatico: value('SIF_ID', '01'),
+    version: value('SIF_VERSION', 'test'),
+    numeroInstalacion: value('SIF_INSTALLATION', 'TEST'),
+    tipoUsoPosibleSoloVerifactu: si('SIF_SOLO_VERIFACTU', 'S'),
+    tipoUsoPosibleMultiOT: si('SIF_MULTI_OT', 'S'),
+    indicadorMultiplesOT: si('SIF_MULTIPLES_OT', 'S')
+  };
+}
+
 export function createDefaultFiscalConfiguration(params: {
   nif: string;
   nombreRazon: string;
@@ -469,17 +500,7 @@ export function createDefaultFiscalConfiguration(params: {
     modalidad: params.modalidad || 'VERI_FACTU',
     entornoAeat: params.entorno || 'pruebas',
     versionEspecificacion: '1.0',
-    sistemaInformatico: {
-      nombreRazon: 'Gestión Avícola Software S.L.',
-      nif: 'B99999999',
-      nombreSistemaInformatico: 'Gestión Avícola SIF',
-      idSistemaInformatico: '01',
-      version: '1.0.0',
-      numeroInstalacion: 'INST-001',
-      tipoUsoPosibleSoloVerifactu: 'S',
-      tipoUsoPosibleMultiOT: 'N',
-      indicadorMultiplesOT: 'N'
-    },
+    sistemaInformatico: resolveSistemaInformaticoFiscal(),
     remisionAutomatica: true,
     reintentosMaximos: 3,
     minutosEntreReintentos: 5,
