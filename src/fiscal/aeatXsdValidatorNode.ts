@@ -15,7 +15,6 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { execFileSync } from 'node:child_process';
-import { validateAeatVerifactuXml } from './aeatVerifactuXmlBuilder';
 
 export interface XmlValidationReport {
   valid: boolean;
@@ -50,8 +49,7 @@ export function validateXmlAgainstOfficialXsd(
       return { valid: true, errors: [] };
     } catch (err: any) {
       if (err.code === 'ENOENT') {
-        // Si xmllint no está instalado en el sistema operativo, validar con el validador normativo interno
-        return validateAeatVerifactuXml(xmlString);
+        return { valid: false, errors: ['xmllint/libxml2 no está instalado. La validación XSD oficial es obligatoria antes del envío; no se permite sustituirla por validaciones manuales.'] };
       }
       const output = (err.stderr || err.stdout || err.message || '').toString();
       const rawLines = output
